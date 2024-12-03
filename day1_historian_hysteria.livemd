@@ -1,0 +1,73 @@
+<!-- livebook:{"file_entries":[{"name":"day1_input.bin","type":"attachment"}]} -->
+
+# Day 1: Historian Hysteria
+
+```elixir
+Mix.install([{:kino, "~> 0.14.0"}])
+```
+
+## Reading
+
+(I'm guessing the entire "look for the chief historian an these locations" preamble sets the tone for the entire Advent of Code puzzles.)
+
+* List of relevant locations identified by a (unique?) ID each
+* **Input:** two lists of location IDs, unordered
+* **Goal:** come up with the full list of all unqiue IDs on both lists
+
+Instead of simply using a Set, they want me to use a more convoluted algorighm (perhaps I'm overlooking something as well):
+
+1. pair up the smallest items from both lists, then the second smallest, etc (pre sort the list and iterate?)
+2. figure out how far apart the numbers are (subtract the greater one from the smller one, always positive)
+3. find the total distance between both lists (sum all distances)
+
+## Input Data
+
+Attached file `input.bin` from https://adventofcode.com/2024/day/1/input
+
+## Implementation
+
+```elixir
+{left, right} =
+  "day1_input.bin"
+  |> Kino.FS.file_path()
+  |> File.stream!()
+  |> Stream.map(&String.split/1)
+  |> Enum.reduce({[], []}, fn [l_val, r_val], {l_list, r_list} ->
+    r_int = String.to_integer(r_val)
+    l_int = String.to_integer(l_val)
+    {[r_int | l_list], [l_int | r_list]}
+  end)
+```
+
+With the input loaded and cached in the cell, we'll calculate the distances.
+
+```elixir
+left = Enum.sort(left, :asc)
+right = Enum.sort(right, :asc)
+
+Enum.zip(left, right)
+|> Enum.map(fn {l_val, r_val} -> abs(l_val - r_val) end)
+|> Enum.sum()
+```
+
+## Part 2
+
+* Apparently there are problems with the input set, some numbers could be incorrect
+* We now want to find out how _similar_ the two lists are
+
+Instead of using a Set to compare the two, we are doing it mathematically again
+
+1. Take the original two lists again
+2. Multiply each number if the left list by how often it is found in the right list
+3. Sum all numbers for a "total similarity score"
+
+```elixir
+lookup = Enum.reduce(right, %{}, fn element, acc ->
+  Map.update(acc, element, 1, fn count -> count + 1 end)
+end)
+
+Enum.reduce(left, 0, fn element, similarity_score ->
+  count = Map.get(lookup, element, 0)
+  similarity_score + element * count
+end)
+```

@@ -1,0 +1,90 @@
+<!-- livebook:{"file_entries":[{"name":"day2_input.bin","type":"attachment"}]} -->
+
+# Day 2: Red-Nosed Reports
+
+```elixir
+Mix.install([
+  {:kino, "~> 0.14.0"}
+])
+```
+
+## Reading
+
+* We're analyzing data readings from a reactor
+* **Input:** One *report* per line
+  * Each unmber in a report is called a *level*
+* Determine which are "save"
+  * all levels are increasing or decreasing
+  * adjacent levels differ by _at least one_ and _at most three_
+
+## Input
+
+File `day_2_input.bin` in the attachments.
+
+## Loading the Data
+
+```elixir
+reports =
+  "day2_input.bin"
+  |> Kino.FS.file_path()
+  |> File.stream!()
+  |> Stream.map(fn line ->
+    line
+    |> String.split()
+    |> Enum.map(&String.to_integer/1)
+  end)
+  |> Enum.to_list()
+```
+
+**NOTE**: Elixir interprets some of the lists with integers as strings. This is why _in the printed output_ they show up as weird strings. They're all lists of numbers though!
+
+```elixir
+is_safe? = fn report ->
+  chunks = Enum.chunk_every(report, 2, 1, :discard)
+  monotonic? = chunks
+    |> Enum.map(fn [a, b] -> a > b end)
+    # TODO any better way to say "are all elements the smae?"
+    |> Enum.uniq()
+    |> case do
+      [_single] -> true
+      _multiple -> false
+    end
+  
+  difference? = Enum.reduce_while(chunks, true, fn [a, b], _acc ->
+      difference = abs(a - b)
+      if difference > 3 or difference < 1, do: {:halt, false}, else: {:cont, true}
+    end)
+  monotonic? and difference?
+end
+
+safe_count = Enum.reduce(reports, 0, fn report, count ->
+  if is_safe?.(report), do: count + 1, else: count
+end)
+
+
+```
+
+## Part 2
+
+* We want to tolerate some level of unsafety
+* If a report only contains a _single_ bad level, it is still considered safe
+
+Brute force would be to remove one level left-to-right from an unsafe the report and run the safety check again. If either of them succeed, we count it safe. If not, it stays unsafe.
+
+```elixir
+dampened_safe_count = Enum.reduce(reports, 0, fn report, count ->
+  if is_safe?.(report) do
+    count + 1
+  else
+    Enum.reduce_while(1..length(report), count, fn index, safe_count ->
+      report
+      |> List.delete_at(index - 1)
+      |> is_safe?.()
+      |> case do
+        true -> {:halt, safe_count + 1}
+        false -> {:cont, safe_count}
+      end
+    end)
+  end
+end)
+```
