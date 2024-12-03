@@ -39,21 +39,21 @@ reports =
 **NOTE**: Elixir interprets some of the lists with integers as strings. This is why _in the printed output_ they show up as weird strings. They're all lists of numbers though!
 
 ```elixir
+all_same_elements? = fn [first | rest] ->
+  Enum.all?(rest, fn element -> element == first end)
+end
+
 is_safe? = fn report ->
   chunks = Enum.chunk_every(report, 2, 1, :discard)
   monotonic? = chunks
     |> Enum.map(fn [a, b] -> a > b end)
-    # TODO any better way to say "are all elements the smae?"
-    |> Enum.uniq()
-    |> case do
-      [_single] -> true
-      _multiple -> false
-    end
+    |> all_same_elements?.()
   
   difference? = Enum.reduce_while(chunks, true, fn [a, b], _acc ->
       difference = abs(a - b)
       if difference > 3 or difference < 1, do: {:halt, false}, else: {:cont, true}
     end)
+  
   monotonic? and difference?
 end
 
