@@ -19,7 +19,7 @@ Mix.install([
 
 ## Input
 
-File `day_2_input.bin` in the attachments.
+File `day2_input.bin` in the attachments.
 
 ## Loading the Data
 
@@ -45,23 +45,22 @@ end
 
 is_safe? = fn report ->
   chunks = Enum.chunk_every(report, 2, 1, :discard)
-  monotonic? = chunks
+  
+  one_direction? = chunks
     |> Enum.map(fn [a, b] -> a > b end)
     |> all_same_elements?.()
   
-  difference? = Enum.reduce_while(chunks, true, fn [a, b], _acc ->
+  step_size? = Enum.reduce_while(chunks, true, fn [a, b], _acc ->
       difference = abs(a - b)
       if difference > 3 or difference < 1, do: {:halt, false}, else: {:cont, true}
     end)
   
-  monotonic? and difference?
+  one_direction? and step_size?
 end
 
 safe_count = Enum.reduce(reports, 0, fn report, count ->
   if is_safe?.(report), do: count + 1, else: count
 end)
-
-
 ```
 
 ## Part 2
@@ -76,13 +75,13 @@ dampened_safe_count = Enum.reduce(reports, 0, fn report, count ->
   if is_safe?.(report) do
     count + 1
   else
-    Enum.reduce_while(1..length(report), count, fn index, safe_count ->
+    Enum.reduce_while(1..length(report), count, fn index, _ ->
       report
       |> List.delete_at(index - 1)
       |> is_safe?.()
       |> case do
-        true -> {:halt, safe_count + 1}
-        false -> {:cont, safe_count}
+        true -> {:halt, count + 1}
+        false -> {:cont, count}
       end
     end)
   end
