@@ -87,3 +87,26 @@ dampened_safe_count = Enum.reduce(reports, 0, fn report, count ->
   end
 end)
 ```
+
+Alternatively, we can make `is_safe/1` recursive. It will receive the current status of our evaluation until now and the rest of the levels we still need to look at for this report.
+
+```elixir
+# PSEUDO CODE!
+recursive_is_safe? = fn {already_skipped?, direction, previous}, [level | rest] ->
+  # TODO determine initial `direction` for first two items
+  step_size? = abs(previous - level) # TODO check if valid jump
+  one_direction? = same_direction(previous, level) # TODO implement using `:gte`, etz?
+  case do
+    step_size? and one_direction? ->
+      recursive_is_safe?.({already_skipped?, direction, level}, rest)
+
+    already_skipped? == false ->
+      # Drop current level and try to continue
+      recursive_is_safe?.({true, direction, previous}, rest)
+
+    already_skipped? == true ->
+      # We already dropped once before, no use
+      false
+  end
+end
+```
