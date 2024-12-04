@@ -1,0 +1,146 @@
+<!-- livebook:{"file_entries":[{"name":"day3_input.bin","type":"attachment"}]} -->
+
+# Day 3: Mull It Over
+
+```elixir
+Mix.install([
+  {:kino, "~> 0.14.0"}
+])
+```
+
+## Reading
+
+* We're fixing a computer that is trying to run a program
+* The programs memory is corrupted
+* **Input**: The programs memory
+* It has a `mul` instruction that multiplies two given integers
+* Multiplied integers have maximum three digits
+* There are extra _characters_ in the memory that are faulty and must be filtered
+* Find all the valid `mul` instructions, execute them and sum up all results
+
+## Input
+
+Taken from `day3_input.bin`, attached to this livebook.
+
+```elixir
+content =
+  "day3_input.bin"
+  |> Kino.FS.file_path()
+  |> File.stream!()
+```
+
+## Parsing
+
+I think building a lexer here would be fun but for now, lets stick with Regex. Since the input is very strictly defined, we can somewhat easily do it.
+
+Regex note: there is no "repeat this one to three times" like `\d{1-3}` or something, so instead we require the first digit with `\d` and make up to two more digits optional with `\d?` - reads worse but works like a charm.
+
+```elixir
+instruction_regex = ~r"mul\(\d\d?\d?,\d\d?\d?\)"  
+  
+find_instructions = fn line ->
+  Regex.scan(instruction_regex, line, capture: :first)
+end
+
+eval_instruction = fn [instruction] ->
+  instruction
+  |> String.split(["(", ")", ","], trim: true)
+  |> case do
+    ["mul", a, b] -> String.to_integer(a) * String.to_integer(b)
+  end
+end
+
+total = content
+  |> Stream.flat_map(find_instructions)
+  |> Stream.map(eval_instruction)
+  |> Enum.sum()
+```
+
+## Part 2
+
+* The input also contains some conditionals, parse as well to get more acurate results
+* The `do()` instruction enables all following `mul()` instruction
+* The `don't()` instruction disables all following `mul()` instruction
+* Initially, instructions are **enabled**
+* Parsing is now stateful
+
+```elixir
+defmodule MulState do
+  defstruct left: {:partial, ""}, right: {:partial, ""}
+end
+
+defmodule InstructionLexer do
+  @type line :: binary()
+  @type state :: nil | %MulState{} | :disabled
+  @type results :: [{:mul, integer(), integer()}]
+  
+  @spec lex(line(), state(), results()) :: {results(), state()}
+  def lex("don't()" <> rest, _state, results) do
+    lex(rest, :disabled, results)
+  end
+
+  def lex("do()" <> rest, _state, results) do
+    lex(rest, nil, results)
+  end
+
+  def lex("mul(" <> rest, nil, results) do
+    lex(rest, %MulState{}, results)
+  end
+
+  # TODO this doesn't have the three-digit max rule!
+  @digits ~w(1 2 3 4 5 6 7 8 9 0)
+  def lex(<<c::utf8, rest::binary>>, %MulState{left: {:partial, partial}} = state, results) do
+    cond do
+      <<c>> in @digits ->
+        lex(rest, %MulState{state | left: {:partial, partial <> <<c>>}}, results)
+      <<c>> == "," ->
+        lex(rest, %MulState{state | left: {:done, partial}}, results)
+      true ->
+        # Invalid char, cancel
+        lex(rest, nil, results)
+    end
+  end
+
+  def lex(<<c::utf8, rest::binary>>, %MulState{left: {:done, _}, right: {:partial, partial}} = state, results) do
+    cond do
+      <<c>> in @digits ->
+        lex(rest, %MulState{state | right: {:partial, partial <> <<c>>}}, results)
+      <<c>> == ")" ->
+        l_int = state.left |> elem(1) |> String.to_integer()
+        r_int = state.right |> elem(1) |> String.to_integer()
+        lex(rest, nil, [{:mul, l_int, r_int} | results])
+      true ->
+        # Invalid char, cancel
+        lex(rest, nil, results)
+    end
+  end
+
+  # Advance by one character
+  def lex(<<_char::utf8, rest::binary>>, state, results), do: lex(rest, state, results)
+  
+  # If input is empty, unroll recursion
+  # NOTE: use tuple order for flat_map_reduce/3 usage
+  def lex(_empty, state, results), do: {results, state}
+end
+
+evaluate_lexed = fn {:mul, left, right} when is_number(left) and is_number(right) ->
+  left * right
+end
+
+total = content
+  |> Enum.flat_map_reduce(nil, fn line, lexer_state ->
+    InstructionLexer.lex(line, lexer_state, [])
+  end)
+  |> elem(0) # Just the result list, not the final state
+  |> Enum.reverse()
+  |> Enum.map(evaluate_lexed)
+  |> Enum.sum()
+```
+
+### Lexer
+
+Expanding the regex solution above might have been tricky and I wanted to use a lexer instead.
+
+This goes through a line character by character and passes a state on to the next (recursive) iteration. The state tells us what characters we are looking for next, and what to do if those characters are not found.
+
+The Binary matching with `<<c::utf8>>` gets us one single valid UTF-8 character, but not as a string but an integer (a grapheme representing the specific character). Thats why we need to sourround it with `<<c>>` again, when we want to use it _as_ a string.
