@@ -1,0 +1,157 @@
+<!-- livebook:{"file_entries":[{"name":"day4_input.bin","type":"attachment"}]} -->
+
+# Day 4: Ceres Search
+
+```elixir
+Mix.install([
+  {:kino, "~> 0.14.0"}
+], consolidate_protocols: false)
+# NOTE: disable consolidation of protocols to allow the new protocol for WordMatrix
+# to be defined _after_ compilation.
+```
+
+## Reading
+
+* **Input**: a word search
+* Look for word `XMAS`
+* The word can be written
+  * backwards
+  * horizontal
+  * vertical
+  * diagonal
+  * overlapping other words (I understand this to mean that words that are used once to make an `XMAS` are NOT struc from the list and can be used to make another `XMAS`)
+* Count _all_ occourences
+
+First off, this Elf that does a word search like the one in the input data is insane. Send her help as soon as possible.
+
+## Input
+
+The file `day4_input.bin`, downloaded and stored as an attachment to this livebook.
+
+```elixir
+defmodule WordMatrix do
+  defstruct matrix: [], rows: 0, cols: 0
+  def new(matrix) do
+    rows = length(matrix)
+    cols = matrix |> Enum.at(0) |> length()
+    %__MODULE__{matrix: matrix, rows: rows, cols: cols}
+  end
+end
+
+word_matrix =
+  Kino.FS.file_path("day4_input.bin")
+  |> File.stream!()
+  |> Stream.map(fn line -> line |> String.trim_trailing() |> String.to_charlist() end)
+  |> Enum.to_list()
+  |> WordMatrix.new()
+```
+
+## Idea
+
+```elixir
+defimpl Enumerable, for: WordMatrix do
+  @window_length 4
+  
+  @impl true
+  def count(%WordMatrix{cols: cols, rows: rows}) do
+    {:ok, (cols - (@window_length - 1)) * (rows - (@window_length - 1))}
+  end
+
+  @impl true
+  def reduce(_wm, {:suspend, _}, _reducer), do: raise "suspension not supported"
+  def reduce(_wm, {:halt, {_, acc}}, _reducer), do: {:halted, acc}
+  
+  def reduce(%WordMatrix{cols: cols, rows: rows, matrix: matrix} = wm, {:cont, {{row, col}, acc}}, reducer) do
+    # Position is top-left
+    window = matrix
+      |> Enum.slice(row..(row + (@window_length - 1)))
+      |> Enum.map(fn row -> Enum.slice(row, col..(col + @window_length - 1)) end)
+    # Reduce user function
+    {tag, acc} = reducer.(window, acc)
+    # Pick next location
+    continue_col? = col + 1 <= cols - @window_length
+    continue_row? = row + 1 <= rows - @window_length
+    case {continue_col?, continue_row?} do
+      {true, _} -> reduce(wm, {tag, {{row, col + 1}, acc}}, reducer)
+      {false, true} -> reduce(wm, {tag, {{row + 1, 0}, acc}}, reducer)
+      {false, false} -> {:done, acc}
+    end
+  end
+  def reduce(wm, {:cont, acc}, reducer), do: reduce(wm, {:cont, {{0, 0}, acc}}, reducer)
+
+  @impl true
+  def member?(_, _), do: {:error, __MODULE__}
+
+  @impl true
+  def slice(_), do: {:error, __MODULE__}
+end
+```
+
+The input is quite large, but we can break it down:
+
+To spell `XMAS` we need four characters. This can be horizontally, vertically and diagonally. So we're looking at a 4x4 character matrix.
+
+```
+XMAS
+XMAS
+XMAS
+XMAS
+```
+
+Within that matrix, the number of options for `XMAS` to appear are limitted:
+
+* Four options vertically + Four spelled backwards
+* Four options horizontally + Four spelled upsidedown
+* Two options diagonally + Two spelled backwards
+
+Thats 20 options in total for our 4x4 matrix.
+
+```elixir
+count_word = fn lines ->
+  Enum.reduce(lines, 0, fn line, count ->
+     case line do
+      ~c"XMAS" -> count + 1
+      ~c"SAMX" -> count + 1
+      _ -> count
+    end
+  end)
+end
+
+horizontal = fn window -> window end
+
+vertical = fn window ->
+  Enum.map(0..3, fn col ->
+    Enum.reduce(window, [], fn row, list ->
+      list ++ [Enum.at(row, col)]
+    end)
+  end)
+end
+
+diagonal = fn window ->
+  left_to_right = for i <- 0..3, do: window |> Enum.at(i) |> Enum.at(i)
+  right_to_left = for i <- 0..3, do: window |> Enum.at(i) |> Enum.at(3-i)
+  [left_to_right, right_to_left]
+end
+
+found_count =
+  word_matrix
+  |> Enum.map(fn window ->
+    IO.inspect(window, label: "window")
+    h = horizontal.(window) |> count_word.() |> IO.inspect(label: "horizontal")
+    v = vertical.(window) |> count_word.() |> IO.inspect(label: "vertical")
+    d = diagonal.(window) |> count_word.() |> IO.inspect(label: "diagonal")
+    h + v + d
+  end)
+  |> Enum.sum()
+```
+
+**Problem**: The current solution finds the same word multiple times when it's contained in multiple windows.
+
+When a word is found, I need to write down it's coordinates and not find that same word again next time...
+
+### Ideas
+
+* We don't use a `O(1)` access structure above (lists in Elixir are linked lists)
+* If we were able to mutate the matrix, we could "scratch out" any found words so that we don't find them again
+* Alternatively, we could give the found indexes to the `Iterator` and it could then omit the values in the next iteration?
+* Perhaps the notion of using the standard `Iterator` should be thrown out, it's more a "mutating iterator"
