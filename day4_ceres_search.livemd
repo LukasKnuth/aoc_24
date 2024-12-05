@@ -147,11 +147,12 @@ found_count =
 
 **Problem**: The current solution finds the same word multiple times when it's contained in multiple windows.
 
-When a word is found, I need to write down it's coordinates and not find that same word again next time...
+When a word is found, I need to write down it's absolute coordinates and not find that same word again next time...
 
 ### Ideas
 
 * We don't use a `O(1)` access structure above (lists in Elixir are linked lists)
-* If we were able to mutate the matrix, we could "scratch out" any found words so that we don't find them again
-* Alternatively, we could give the found indexes to the `Iterator` and it could then omit the values in the next iteration?
-* Perhaps the notion of using the standard `Iterator` should be thrown out, it's more a "mutating iterator"
+* ~If we were able to mutate the matrix, we could "scratch out" any found words so that we don't find them again~ that would break future partial matches
+* We need a function that given locations in the window for a match returns the global locations for the same match
+* We can then store these global location matches in a set and onyl count them once
+* Perhaps the notion of using the standard `Iterator` should be thrown out, we need more flexibility
