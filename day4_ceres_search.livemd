@@ -243,6 +243,7 @@ h + v + d
 
 * Instead of the word `XMAS`, we're now looking two `MAS` that intersect at the `A`
 * By intersecting, they form an X
+* In the X, each `MAS` can be forward or backward
 
 ```
 M.S
@@ -250,4 +251,52 @@ M.S
 M.S
 ```
 
-*
+* My "sort the whole input" approach won't work for that at all
+* We can reuse the "windowing" approach from above
+* Also, we don't need to fix the duplication problem we had above!
+  * Above, we got duplicates if a whole match was in mulitple subsequent windows
+  * This was usually for horizontal and vertical matches
+  * If the windwo is now 3x3 and always moves one character at a time, the same group is never in the window twice!
+  * Diagonal matches always fill the whole window - that isn't true for vertical and horizontal!
+
+```elixir
+defmodule Window do
+  @window_length 3
+
+  def over(word_matrix, acc, reducer) do
+    do_over(word_matrix, {{0, 0}, acc}, reducer)
+  end
+
+  # NOTE: this can't be an annonymous function because recursion isn't supported
+  # for them: https://stackoverflow.com/a/21983413/717341
+  defp do_over(%WordMatrix{cols: cols, rows: rows, matrix: matrix} = wm, {{row, col}, acc}, reducer) do
+    window = matrix
+      |> Enum.slice(row..(row + (@window_length - 1)))
+      |> Enum.map(fn row -> Enum.slice(row, col..(col + @window_length - 1)) end)
+    acc = reducer.(window, acc)
+    continue_col? = col + 1 <= cols - @window_length
+    continue_row? = row + 1 <= rows - @window_length
+    case {continue_col?, continue_row?} do
+      {true, _} -> do_over(wm, {{row, col + 1}, acc}, reducer)
+      {false, true} -> do_over(wm, {{row + 1, 0}, acc}, reducer)
+      {false, false} -> acc
+    end
+  end
+end
+
+sample = WordMatrix.new([
+  ~c"MMASXSSX",
+  ~c"XXAMXAXA",
+  ~c"MMXSAMMM",
+  ~c"XMAMAXMA",
+  ~c"MMSXSMSM",
+  ~c"MAXXMAMS",
+  ~c"MAMAMMMM",
+  ~c"MXSMMMXS"
+])
+
+Window.over(sample, 0, fn window, 0 ->
+  IO.inspect(window)
+  0
+end)
+```
