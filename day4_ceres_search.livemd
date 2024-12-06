@@ -44,6 +44,18 @@ word_matrix =
   |> Stream.map(fn line -> line |> String.trim_trailing() |> String.to_charlist() end)
   |> Enum.to_list()
   |> WordMatrix.new()
+
+# Taken from the input, just a lot smaller and easier to reason about.
+small_sample = WordMatrix.new([
+  ~c"MMASXSSX",
+  ~c"XXAMXAXA",
+  ~c"MMXSAMMM",
+  ~c"XMAMAXMA",
+  ~c"MMSXSMSM",
+  ~c"MAXXMAMS",
+  ~c"MAMAMMMM",
+  ~c"MXSMMMXS"
+])
 ```
 
 ## Idea
@@ -284,19 +296,32 @@ defmodule Window do
   end
 end
 
-sample = WordMatrix.new([
-  ~c"MMASXSSX",
-  ~c"XXAMXAXA",
-  ~c"MMXSAMMM",
-  ~c"XMAMAXMA",
-  ~c"MMSXSMSM",
-  ~c"MAXXMAMS",
-  ~c"MAMAMMMM",
-  ~c"MXSMMMXS"
-])
+is_x? = fn window ->
+  bound = length(window) - 1
+  left_to_right = for i <- 0..bound, do: window |> Enum.at(i) |> Enum.at(i)
+  right_to_left = for i <- 0..bound, do: window |> Enum.at(i) |> Enum.at(bound - i)
+  case {left_to_right, right_to_left} do
+    {~c"MAS", ~c"MAS"} -> true
+    {~c"MAS", ~c"SAM"} -> true
+    {~c"SAM", ~c"MAS"} -> true
+    {~c"SAM", ~c"SAM"} -> true
+    _ -> false
+  end
+end
 
-Window.over(sample, 0, fn window, 0 ->
-  IO.inspect(window)
-  0
+x_count = Window.over(word_matrix, 0, fn window, count ->
+  if is_x?.(window), do: count + 1, else: count
 end)
 ```
+
+## Closing thoughts
+
+This was the first one that was really though for me. Part 1 took me a good while. My mistakes (I think):
+
+* Code was way to overcooked for this small assignment (implementing Enumarable...)
+* Not using visualization earlier
+* I seem to struggle with index calculation magic (weak spot?)
+* I didn't use any of the visualization tools that Livebook offers (would they have been helpful?)
+* The `count_diagonal` function in part 1 is horrendous
+
+In the end I'm happy with what I did here though. I feel I understood the problem space very thoroughly. Once I got past part 1, I was able to reuse my approach for part 2 and steal most of the code that I had already written and verified. Nice.
