@@ -135,14 +135,14 @@ end
 
 found_count =
   word_matrix
-  |> Enum.map(fn window ->
+  |> Stream.map(fn window ->
     IO.inspect(window, label: "window")
     h = horizontal.(window) |> count_word.() |> IO.inspect(label: "horizontal")
     v = vertical.(window) |> count_word.() |> IO.inspect(label: "vertical")
     d = diagonal.(window) |> count_word.() |> IO.inspect(label: "diagonal")
     h + v + d
   end)
-  |> Enum.sum()
+  #|> Enum.sum() Counts words double, see explaination below...
 ```
 
 **Problem**: The current solution finds the same word multiple times when it's contained in multiple windows.
@@ -156,3 +156,98 @@ When a word is found, I need to write down it's absolute coordinates and not fin
 * We need a function that given locations in the window for a match returns the global locations for the same match
 * We can then store these global location matches in a set and onyl count them once
 * Perhaps the notion of using the standard `Iterator` should be thrown out, we need more flexibility
+
+## New Approach
+
+After sleeping on it for another day, I think I have a simpler approach:
+
+* We transform/rotate the whole input
+* The result is a list of strings, each string is then simply checked with `substr`/regex for either `XMAS` or `SAMX`
+* Horizontal is easy, thats just line by line from the input
+* Vertical is the first char of each line, then the second char from each line, etc
+* Diagonal left-to-right:
+  1. start line 1 char 1
+  2. line 2 char 1, line 1 char 2
+  3. line 3 char 1, line 2 char 2, line 1 char 3
+  4. line 4 char 1, line 3 char 2, line 2 char 3, line 1 char 4
+* Diagonal right-to-left:
+  1. start line 1 char -1
+  2. line 2 char -1, line 1 char -2
+  3. line 3 char -1, line 2 char -2, line 1 char -3
+  4. line 4 char -1, line 3 char -2, line 2 char -3, line 1 char -4
+* No need to keep track of already checked results because we won't seem them again
+
+```elixir
+term_regular_regex = ~r/XMAS/
+term_reverse_regex = ~r/SAMX/
+
+count_regex_found = fn regex, line ->
+  regex |> Regex.scan(line, capture: :first) |> Enum.count()
+end
+
+count_terms = fn charlist_line ->
+  line = List.to_string(charlist_line)
+  regular_count = count_regex_found.(term_regular_regex, line)
+  reverse_count = count_regex_found.(term_reverse_regex, line)
+  regular_count + reverse_count
+end
+
+count_horizontal = fn %WordMatrix{matrix: matrix} ->
+  matrix |> Stream.map(count_terms) |> Enum.sum()
+end
+
+count_vertical = fn %WordMatrix{matrix: matrix, cols: cols} ->
+  Stream.map(0..cols - 1, fn col ->
+    for row <- matrix, do: Enum.at(row, col)
+  end)
+  |> Stream.map(count_terms)
+  |> Enum.sum()
+end
+
+count_diagonal = fn %WordMatrix{matrix: matrix, rows: rows, cols: cols} ->
+  left_to_right = Stream.flat_map(0..rows - 1, fn start ->
+    top = for row <- start..0//-1, do: matrix |> Enum.at(row) |> Enum.at(start - row)
+    bot = if start < (rows - 1) do
+      for col <- start..0//-1, do: matrix |> Enum.at((rows - 1) - (start - col)) |> Enum.at((cols - 1) - col)
+    else
+      # don't do the middle once in top AND once in bottom!
+      []
+    end
+    [top, bot]
+  end)
+  right_to_left = Stream.flat_map(0..rows - 1, fn start ->
+    top = for row <- start..0//-1, do: matrix |> Enum.at(row) |> Enum.at((cols - 1) - (start - row))
+    bot = if start < (rows - 1) do
+      for col <- start..0//-1, do: matrix |> Enum.at((rows - 1) - (start - col)) |> Enum.at(col)
+    else
+      []
+    end
+    [top, bot]
+  end)
+   
+  [left_to_right, right_to_left]
+  |> Stream.zip()
+  |> Stream.map(fn {a, b} ->
+    count_terms.(a) + count_terms.(b)
+  end)
+  |> Enum.sum()
+end
+
+h = count_horizontal.(word_matrix) |> IO.inspect(label: "h")
+v = count_vertical.(word_matrix) |> IO.inspect(label: "v")
+d = count_diagonal.(word_matrix) |> IO.inspect(label: "d")
+h + v + d
+```
+
+## Part 2
+
+* Instead of the word `XMAS`, we're now looking two `MAS` that intersect at the `A`
+* By intersecting, they form an X
+
+```
+M.S
+.A.
+M.S
+```
+
+*
