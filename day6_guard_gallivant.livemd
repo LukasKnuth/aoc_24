@@ -1,0 +1,225 @@
+<!-- livebook:{"file_entries":[{"name":"day6_input.bin","type":"attachment"}]} -->
+
+# Day 6: Guard Gallivant
+
+```elixir
+Mix.install([
+  {:kino, "~> 0.14.0"}
+])
+```
+
+## Reading
+
+* We're trying to avoid a guard with a set patrol pattern
+* **Input** a map of the room, top down
+  * The guard is marked by an arrow **in the direction** they're facing
+  * Obstructions are marked as `#`
+* The guard follows an algorithm to move:
+  1. Go in current facing direction
+  2. If hitting obstacle, rotate 90 degrees _right_
+  3. If leaving map, complete
+* Simulate until the guard leaves the map
+* **Output**: Count the number of _distinct_ positions the guard has stood on
+  * If they are on a spot multiple times, it counts only ONCE!
+
+## Input
+
+```elixir
+raw_map =
+  Kino.FS.file_path("day6_input.bin")
+  |> File.read!()
+
+raw_sample = 
+  "....#.....\n.........#\n..........\n..#.......\n.......#..\n..........\n.#..^.....\n........#.\n#.........\n......#..."
+```
+
+## Implementation
+
+### Map
+
+* We'll need a matrix/field to store the map in memory
+  * Also find initial guard position while running through map
+* Since elixir `List`s are linked lists, random access is "slow"
+* Can we simply run the entire map once and create a `Map`?
+  * Key is `{x, y}` position, value is `:obstacle` or `:floor`
+  * If key isn't in Map, we're out-of-bounds
+* The map input is square, so we can take the last X position and use it as the boundary in both directions
+
+```elixir
+parse_map = fn raw_input ->
+  raw_input
+  |> String.to_charlist()
+  |> Enum.reduce({{0,0}, %{}, nil}, fn
+    ?., {{x, y}, map, guard} -> 
+      map = Map.put_new(map, {x, y}, :floor)
+      {{x + 1, y}, map, guard}
+    
+    ?#, {{x, y}, map, guard} ->
+      map = Map.put_new(map, {x, y}, :obstacle)
+      {{x + 1, y}, map, guard}
+
+    ?\n, {{_, y}, map, guard} ->
+      {{0, y + 1}, map, guard}
+
+    ?<, {{x, y}, map, nil} ->
+      map = Map.put_new(map, {x, y}, :floor)
+      {{x + 1, y}, map, {{x, y}, :west}}
+
+    ?>, {{x, y}, map, nil} ->
+      map = Map.put_new(map, {x, y}, :floor)
+      {{x + 1, y}, map, {{x, y}, :east}}
+
+    ?^, {{x, y}, map, nil} ->
+      map = Map.put_new(map, {x, y}, :floor)
+      {{x + 1, y}, map, {{x, y}, :north}}
+
+    ?v, {{x, y}, map, nil} ->
+      map = Map.put_new(map, {x, y}, :floor)
+      {{x + 1, y}, map, {{x, y}, :south}}
+
+    char, acc -> raise "unexpected char #{<<char>>} found, #{inspect(acc)}!"
+  end)
+end
+
+{{0, boundary}, my_map, {guard_start, guard_facing}} = parse_map.(raw_map)
+
+IO.inspect(my_map, label: "map")
+IO.inspect(guard_start, label: "guard at")
+IO.inspect(guard_facing, label: "guard facing")
+IO.inspect(boundary, label: "boundary (in either direction)")
+:ok
+```
+
+### Movement
+
+* The movement algorithm is implemented in a `simulate_step` function that takes the map as input
+* The current position the `simulate_step` returns the new position `{X, Y}`
+* Put the position into a `Set` to later count distinct positions
+* Simulate until guard position `X` or `Y` is out of bounds of map
+
+```elixir
+defmodule Guard do
+  def rotate_right(current_direction) do
+    case current_direction do
+      :north -> :east
+      :east -> :south
+      :south -> :west
+      :west -> :north
+    end
+  end
+
+  def next_pos({x, y}, facing_direction) do
+    case facing_direction do
+      :north -> {x, y - 1}
+      :east -> {x + 1, y}
+      :south -> {x, y + 1}
+      :west -> {x - 1, y}
+    end
+  end
+
+  def simulate_step(map, pos, facing_direction) do
+    new_pos = next_pos(pos, facing_direction)
+    case Map.get(map, new_pos, :out_of_bounds) do
+      :floor -> {:ok, new_pos, facing_direction}
+      :obstacle -> {:ok, pos, rotate_right(facing_direction)}
+      #:obstacle -> simulate_step(map, pos, rotate_right(facing_direction))
+      :out_of_bounds -> :out_of_bounds
+    end
+  end
+end
+
+distinct_pos_count = 
+  # NOTE: using `repeatedly` gives and endless enum to "drive" the `reduce_while`
+  # until we eventually return `:halt` from the reducer.
+  Stream.repeatedly(fn -> :next_step end)
+  |> Enum.reduce_while({MapSet.new([guard_start]), guard_start, guard_facing}, fn _, {visited, pos, facing} ->
+    case Guard.simulate_step(my_map, pos, facing) do
+      {:ok, new_pos, new_facing} ->
+        visited = MapSet.put(visited, new_pos)
+        {:cont, {visited, new_pos, new_facing}}
+
+      :out_of_bounds ->
+        {:halt, visited}
+    end
+  end)
+  |> MapSet.size()
+```
+
+## Part 2
+
+* Based on the existing map, we want to add _one_ new `:obstacle` to get the guard stuck in a loop
+* The obstacle can't be added on the guards start position
+* **Output**: Find all possible positions to add the new obstacle and count them
+
+### Ideas
+
+* The first question is: "How do you detect a loop?"
+* If they walk in a circle, `simulate_step` should return the same positions after a while
+* The only positions that are relevant for that are the ones where the guard _changes direction_
+* Put `{{x, y}, direction}` in a `Map` and store the number of "seen" as the value
+* As soon as we see a `3` from the `Map`, we have a loop
+
+```elixir
+is_loop? = fn parallel_universe, start_pos, start_facing ->
+  Stream.repeatedly(fn -> :next_step end)
+  |> Enum.reduce_while({MapSet.new(), start_pos, start_facing}, fn _, {history, pos, facing} ->
+    case Guard.simulate_step(parallel_universe, pos, facing) do
+      {:ok, new_pos, new_facing} when new_facing != facing ->
+        # We turned for an obstacle
+        if MapSet.member?(history, {new_pos, new_facing}) do
+          {:halt, true} # Back where we were, it's a circle!
+        else
+          history = MapSet.put(history, {new_pos, new_facing})
+          {:cont, {history, new_pos, new_facing}}
+        end
+
+      {:ok, new_pos, new_facing} ->
+        # Just walk on, nothing to see here
+        {:cont, {history, new_pos, new_facing}}
+        
+      :out_of_bounds ->
+        {:halt, false}
+    end
+  end)
+end
+```
+
+With loop detection done, we can now brute-force all possible maps with one more obstacle
+
+* Iterate over all possible positions from `0..boundary`
+* Don't do anything for `guard_start_pos`
+* Add an obstacle if there isn't one alredy
+* Check if this new map gives true for `is_loop?`
+
+```elixir
+place_new_obstacle = fn obstacle_pos, map ->
+ case Map.get(map, obstacle_pos) do
+    nil -> :error # out of bounds
+    :obstacle -> :error # Already an obstacle, skip
+    :floor -> {:ok, Map.replace!(map, obstacle_pos, :obstacle)}
+  end
+end
+
+placement_count = Stream.repeatedly(fn -> :next_step end)
+  |> Enum.reduce_while({0, {guard_start, guard_facing}}, fn _, {count, {pos, facing}} ->
+    pos
+    |> Guard.next_pos(facing)
+    |> place_new_obstacle.(my_map)
+    |> case do
+      :error -> count
+      {:ok, parallel_universe} ->
+        if is_loop?.(parallel_universe, pos, facing), do: count + 1, else: count
+    end
+    |> then(fn count ->
+      case Guard.simulate_step(my_map, pos, facing) do
+        {:ok, new_pos, new_facing} -> {:cont, {count, {new_pos, new_facing}}}
+        :out_of_bounds -> {:halt, count}
+      end
+    end)
+  end)
+```
+
+* 1846 if turn is one simulation step and walk is the next
+* 1790 if we turn and walk in one simulation step
+
+I'm missing some corner-case here. The sample input works as expected and gives the same results as described in the puzzle.
