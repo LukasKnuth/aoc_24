@@ -1,0 +1,150 @@
+<!-- livebook:{"file_entries":[{"name":"day5_input.bin","type":"attachment"}]} -->
+
+# Day 5: Print Queue
+
+```elixir
+Mix.install([
+  {:kino, "~> 0.14.0"}
+])
+
+require Integer
+```
+
+## Reading
+
+* We're printing a new safety manual
+* The pages for the manual must be printed in a specific order
+* Notation `x|y` means _if both_ page X and Y must be printed, page X must be printed _before_ page Y
+  * Note: "some time after" means there can be other pages between these two!
+* **Input** The order rules in the above notation
+* **Input** A list of pages to print
+* **Goal**
+  1. From the given rules, find which print jobs are valid
+  2. For each valid job, find the _middle_ page number
+  3. Add all middle page numbers together
+
+Step 3 becons the question: Do all jobs have an odd number of pages - and if not, whats the middle?
+
+## Input
+
+```elixir
+[raw_rules, raw_jobs] =
+  Kino.FS.file_path("day5_input.bin")
+  |> File.read!()
+  |> String.split("\n\n", trim: true)
+
+rules = raw_rules
+  |> String.split("\n", trim: true)
+  |> Enum.map(fn rule ->
+    [l, r] = String.split(rule, "|")
+    {String.to_integer(l), String.to_integer(r)}
+  end)
+  |> IO.inspect(label: "rules")
+
+jobs = raw_jobs
+  |> String.split("\n", trim: true)
+  |> Enum.map(fn job ->
+    job
+    |> String.split(",", trim: true)
+    |> Enum.map(&String.to_integer/1)
+  end)
+  |> IO.inspect(label: "jobs")
+
+:ok
+```
+
+## Implementation
+
+```elixir
+rule_lookup = rules
+  |> Enum.reduce(%{}, fn {before, later} = rule, lookup ->
+    lookup
+    |> Map.update(before, [rule], fn list -> [rule | list] end)
+    |> Map.update(later, [rule], fn list -> [rule | list] end)
+  end)
+
+find_middle_page! = fn job ->
+  length = length(job)
+  if Integer.is_even(length), do: raise "Middle of even list?!?"
+  Enum.at(job, Integer.floor_div(length, 2))
+end
+
+check_valid = fn lookup, job ->
+  job
+  |> Enum.with_index()
+  |> Enum.reduce_while(:valid, fn {page, index}, _acc ->
+    lookup
+    |> Map.get(page, [])
+    # NOTE: Double :cont or :halt tag because we have `reduce_while` _inside_
+    # another `reduce_while`
+    |> Enum.reduce_while({:cont, :valid}, fn
+      {^page, later}, _acc ->
+        case Enum.find_index(job, &Kernel.==(&1, later)) do
+          nil -> {:cont, {:cont, :valid}}
+          found_at when found_at > index -> {:cont, {:cont, :valid}}
+          _ -> {:halt, {:halt, :invalid}}
+        end
+        
+      {before, ^page}, _acc ->
+        case Enum.find_index(job, &Kernel.==(&1, before)) do
+          nil -> {:cont, {:cont, :valid}}
+          found_at when found_at < index -> {:cont, {:cont, :valid}}
+          _ -> {:halt, {:halt, :invalid}}
+        end
+    end)
+  end)
+  |> case do
+    :valid -> {:valid, find_middle_page!.(job)}
+    :invalid -> :invalid
+  end
+end
+
+middle_page_sum = jobs
+  |> Enum.reduce(0, fn job, count ->
+    case check_valid.(rule_lookup, job) do
+      {:valid, middle} -> count + middle
+      :invalid -> count
+    end
+  end)
+```
+
+## Part 2
+
+* Now we're correcting the incorrect print jobs using the same rules
+* **Output** Sum of all _previously incorrect_ jobs middle pages
+
+### Idea
+
+This sounds just like sorting an array but the comparison isn't done with the value but rather the rule...
+
+```elixir
+correct_job = fn lookup, job ->
+  Enum.sort(job, fn a, b ->
+    lookup
+    |> Map.get(a, [])
+    |> Enum.filter(fn {l, r} -> l == b or r == b end)
+    |> case do
+      [] -> true # same
+      [{^a, ^b}] -> true # a before b
+      [{^b, ^a}] -> false # a after b
+      rule -> raise "invalid rule found: #{inspect(rule)}"
+    end
+  end)
+end
+
+corrected_jobs_middle_page_sum = jobs
+  |> Stream.filter(fn job -> check_valid.(rule_lookup, job) == :invalid end)
+  |> Stream.map(fn invalid_job -> correct_job.(rule_lookup, invalid_job) end)
+  |> Enum.reduce(0, fn job, count ->
+    case check_valid.(rule_lookup, job) do
+      {:valid, middle} -> count + middle
+      :invalid -> raise "job should be valid! #{inspect(job)}"
+    end
+  end)
+```
+
+NOTE: The `raise` statements are just here as assertions to validate if the code does the right thing.
+
+Also, we don't _need_ to validate the jobs after we have corrected them, but if the correction has a bug, we can find it early.
+
+In production, I'd split this between runtime code and test. But for the puzzle, it's one and the same.
