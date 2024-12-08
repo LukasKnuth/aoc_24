@@ -111,7 +111,6 @@ defmodule Guard do
     case Map.get(map, new_pos, :out_of_bounds) do
       :floor -> {:ok, new_pos, facing_direction}
       :obstacle -> {:ok, pos, rotate_right(facing_direction)}
-      #:obstacle -> simulate_step(map, pos, rotate_right(facing_direction))
       :out_of_bounds -> :out_of_bounds
     end
   end
@@ -189,8 +188,8 @@ place_new_obstacle = fn obstacle_pos, map ->
   end
 end
 
-placement_count = Enum.reduce(0..boundary, 0, fn x, count ->
-  Enum.reduce(0..boundary, count, fn y, count ->
+placement_count = Enum.reduce(0..boundary - 1, 0, fn x, count ->
+  Enum.reduce(0..boundary - 1, count, fn y, count ->
     case place_new_obstacle.({x, y}, my_map) do
       :error -> count
       {:ok, changed_map} -> if is_loop?.(changed_map, guard_start, guard_facing) do
@@ -225,3 +224,36 @@ The black line is the _original_ map, the one we simulate our movement on. The o
 If we place the orange box where the shaded one is currently, the timeline makes no sense. If the box _where_ there, we'd have collided with it in step 1 (coming north) instead of now that we made our way around (coming from south).
 
 This way, the "optimized" solution finds more loops that aren't possible when simulating the changed maps from the start, as our brute-force solution does.
+
+## Part 2 - re-optimized
+
+```elixir
+optimized_placement_count = Stream.repeatedly(fn -> :next_step end)
+  |> Enum.reduce_while({MapSet.new([]), guard_start, guard_facing}, fn _, {visited, pos, facing} ->
+    case Guard.simulate_step(my_map, pos, facing) do
+      {:ok, new_pos, new_facing} ->
+        visited = MapSet.put(visited, new_pos)
+        {:cont, {visited, new_pos, new_facing}}
+
+      :out_of_bounds ->
+        {:halt, visited}
+    end
+  end)
+  |> Enum.reduce(0, fn {x, y}, count ->
+    case place_new_obstacle.({x, y}, my_map) do
+      :error -> count
+      {:ok, changed_map} -> if is_loop?.(changed_map, guard_start, guard_facing) do
+        count + 1
+      else
+        count
+      end
+    end
+  end)
+```
+
+The brute-force version above places obstacles _everywhere_, even if the guard will never end up on these spaces. Then, we simulate the path for that version of the map, which will be entirely the same as the _normal_ unchagned map. Not smart.
+
+To not waste time looking at map variations that the guard will never come accross, we simulate the entire path through the _normal_ map once. This gives us all unique positions that the guard _is_ going to come accross. Then, we can spawn obstacles in all these places and simualte the maps.
+
+* Brute-Force (MacBook Pro M2): 152sec
+* Optimized (MacBook Pro M2): 31sec
