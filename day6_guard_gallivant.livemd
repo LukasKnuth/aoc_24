@@ -239,15 +239,16 @@ optimized_placement_count = Stream.repeatedly(fn -> :next_step end)
         {:halt, visited}
     end
   end)
-  |> Enum.reduce(0, fn {x, y}, count ->
-    case place_new_obstacle.({x, y}, my_map) do
-      :error -> count
-      {:ok, changed_map} -> if is_loop?.(changed_map, guard_start, guard_facing) do
-        count + 1
-      else
-        count
-      end
-    end
+  |> Stream.map(fn {x, y} -> place_new_obstacle.({x, y}, my_map) end)
+  |> Stream.filter(fn map -> map != :error end)
+  |> Task.async_stream(
+    fn {:ok, map} -> is_loop?.(map, guard_start, guard_facing) end,
+    ordered: false
+  )
+  |> Enum.reduce(0, fn
+    {:ok, true}, count -> count + 1
+    {:ok, false}, count -> count
+    result, _count -> raise "Unexpected result #{inspect(result)}"
   end)
 ```
 
@@ -257,3 +258,11 @@ To not waste time looking at map variations that the guard will never come accro
 
 * Brute-Force (MacBook Pro M2): 152sec
 * Optimized (MacBook Pro M2): 31sec
+
+### Parallelization
+
+Instead of calculating each changed map sequentially (one after another), we can calculate multiple of them in parallel.
+
+The code above spawns a number of processes (10 on my MacBook Pro M2) and schedules one guard running one change map for each of them. The results are collected as they come in and the completed tasks starts with next map.
+
+* Prallel (MacBook Pro M2): 6sec
