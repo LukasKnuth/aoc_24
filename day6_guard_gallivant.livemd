@@ -1,4 +1,4 @@
-<!-- livebook:{"file_entries":[{"name":"day6_input.bin","type":"attachment"}]} -->
+<!-- livebook:{"file_entries":[{"name":"day6_input.bin","type":"attachment"},{"name":"day6_universe_problem.png","type":"attachment"}]} -->
 
 # Day 6: Guard Gallivant
 
@@ -61,23 +61,12 @@ parse_map = fn raw_input ->
     ?\n, {{_, y}, map, guard} ->
       {{0, y + 1}, map, guard}
 
-    ?<, {{x, y}, map, nil} ->
-      map = Map.put_new(map, {x, y}, :floor)
-      {{x + 1, y}, map, {{x, y}, :west}}
-
-    ?>, {{x, y}, map, nil} ->
-      map = Map.put_new(map, {x, y}, :floor)
-      {{x + 1, y}, map, {{x, y}, :east}}
-
     ?^, {{x, y}, map, nil} ->
       map = Map.put_new(map, {x, y}, :floor)
       {{x + 1, y}, map, {{x, y}, :north}}
 
-    ?v, {{x, y}, map, nil} ->
-      map = Map.put_new(map, {x, y}, :floor)
-      {{x + 1, y}, map, {{x, y}, :south}}
-
-    char, acc -> raise "unexpected char #{<<char>>} found, #{inspect(acc)}!"
+    char, acc ->
+      raise "unexpected char #{<<char>>} found, #{inspect(acc)}!"
   end)
 end
 
@@ -162,20 +151,20 @@ distinct_pos_count =
 ```elixir
 is_loop? = fn parallel_universe, start_pos, start_facing ->
   Stream.repeatedly(fn -> :next_step end)
-  |> Enum.reduce_while({MapSet.new(), start_pos, start_facing}, fn _, {history, pos, facing} ->
+  |> Enum.reduce_while({MapSet.new(), start_pos, start_facing}, fn _, {visited, pos, facing} ->
     case Guard.simulate_step(parallel_universe, pos, facing) do
       {:ok, new_pos, new_facing} when new_facing != facing ->
         # We turned for an obstacle
-        if MapSet.member?(history, {new_pos, new_facing}) do
+        if MapSet.member?(visited, {new_pos, new_facing}) do
           {:halt, true} # Back where we were, it's a circle!
         else
-          history = MapSet.put(history, {new_pos, new_facing})
-          {:cont, {history, new_pos, new_facing}}
+          visited = MapSet.put(visited, {new_pos, new_facing})
+          {:cont, {visited, new_pos, new_facing}}
         end
 
       {:ok, new_pos, new_facing} ->
         # Just walk on, nothing to see here
-        {:cont, {history, new_pos, new_facing}}
+        {:cont, {visited, new_pos, new_facing}}
         
       :out_of_bounds ->
         {:halt, false}
@@ -193,33 +182,46 @@ With loop detection done, we can now brute-force all possible maps with one more
 
 ```elixir
 place_new_obstacle = fn obstacle_pos, map ->
- case Map.get(map, obstacle_pos) do
+  case Map.get(map, obstacle_pos) do
     nil -> :error # out of bounds
     :obstacle -> :error # Already an obstacle, skip
     :floor -> {:ok, Map.replace!(map, obstacle_pos, :obstacle)}
   end
 end
 
-placement_count = Stream.repeatedly(fn -> :next_step end)
-  |> Enum.reduce_while({0, {guard_start, guard_facing}}, fn _, {count, {pos, facing}} ->
-    pos
-    |> Guard.next_pos(facing)
-    |> place_new_obstacle.(my_map)
-    |> case do
+placement_count = Enum.reduce(0..boundary, 0, fn x, count ->
+  Enum.reduce(0..boundary, count, fn y, count ->
+    case place_new_obstacle.({x, y}, my_map) do
       :error -> count
-      {:ok, parallel_universe} ->
-        if is_loop?.(parallel_universe, pos, facing), do: count + 1, else: count
-    end
-    |> then(fn count ->
-      case Guard.simulate_step(my_map, pos, facing) do
-        {:ok, new_pos, new_facing} -> {:cont, {count, {new_pos, new_facing}}}
-        :out_of_bounds -> {:halt, count}
+      {:ok, changed_map} -> if is_loop?.(changed_map, guard_start, guard_facing) do
+        count + 1
+      else
+        count
       end
-    end)
+    end
   end)
+end)
 ```
 
-* 1846 if turn is one simulation step and walk is the next
-* 1790 if we turn and walk in one simulation step
+### De-optimization
 
-I'm missing some corner-case here. The sample input works as expected and gives the same results as described in the puzzle.
+My first iteration of the part 2 solution used a more optimized algorithm:
+
+1. Simulate a guard step on the _original_ map
+2. If we're out-of-bounds, complete loop and return current `count`
+3. Place an obstacle right in front of the guard on a _new_ "alternate universe" map
+4. Simulate on the _new_ "alternate universe" map until looping or out-of-bounds
+5. If loop, `count + 1`
+6. Go to 1
+
+This _seems_ correct, but gives incorrect results (curiously it does give correct results for the sample input, but not for a full dataset).
+
+We have identified _at least_ one problem:
+
+![](files/day6_universe_problem.png)
+
+The black line is the _original_ map, the one we simulate our movement on. The orange line represents one _new_ "parallel universe" we have spun off. At the point where the orange arrow is pointing a the shaded orange box, we have our issue.
+
+If we place the orange box where the shaded one is currently, the timeline makes no sense. If the box _where_ there, we'd have collided with it in step 1 (coming north) instead of now that we made our way around (coming from south).
+
+This way, the "optimized" solution finds more loops that aren't possible when simulating the changed maps from the start, as our brute-force solution does.
