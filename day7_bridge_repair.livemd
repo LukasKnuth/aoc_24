@@ -1,0 +1,89 @@
+<!-- livebook:{"file_entries":[{"name":"day7_input.bin","type":"attachment"}]} -->
+
+# Day 7: Bridge Repair
+
+```elixir
+Mix.install([
+  {:kino, "~> 0.14.0"}
+])
+```
+
+## Reading
+
+* We're doing calibrations for a rope bridge
+* Looking fro the right _operators_ to some equations
+* **Input** Equations without any operators
+* Equations are _always_ evaluated left-to-right - NOT according to operator precedence
+* Possbile operators are `+` and `*`
+* The equation holds if it results in the value before the colon
+* **Result** Sum of all equation results that _can_ be made to work with any operators
+
+## Input
+
+```elixir
+equation_stream =
+  Kino.FS.file_path("day7_input.bin")
+  |> File.stream!()
+  |> Stream.map(fn line ->
+    [result, numbers] = String.split(line, ":")
+    numbers = numbers
+      |> String.split()
+      |> Enum.map(fn num -> num |> String.trim() |> String.to_integer() end)
+    {String.to_integer(result), numbers}
+  end)
+```
+
+## Implementation
+
+* With the parsed input from above we can basically just test all combinations
+* We can write a generator that generates a set of operators for the length of the list of values:
+  * `+ +`
+  * `* +`
+  * `+ *`
+  * `* *`
+* This grows exponentially, so it might be slow if we do it brute-force
+
+```elixir
+defmodule Evaluator do
+  @operands [:mul, :add]
+
+  def is_possibly_true?({result, [first | rest]}) do
+    do_calc(result, rest, first, @operands)
+    |> case do
+      :ok -> true
+      _ -> false
+    end
+  end
+
+  defp do_calc(target, [number | rest] = numbers, current, [operand | fallback]) do
+    case eval(current, number, operand) do
+      result when result > target -> do_calc(target, numbers, current, fallback)
+      result -> do_calc(target, rest, result, @operands)
+    end
+    |> then(fn
+      :ok -> :ok
+      :step_back -> do_calc(target, numbers, current, fallback)
+    end)
+  end
+
+  defp do_calc(_target, _numbers, _current, []) do
+    # No more operators to try, need to step back
+    :step_back
+  end
+
+  defp do_calc(target, [], current, _operators) when target == current, do: :ok
+  defp do_calc(_target, [], _current, _operators), do: :step_back
+
+  defp eval(a, b, :mul), do: a * b
+  defp eval(a, b, :add), do: a + b
+end
+
+total_calibration_result = equation_stream
+  |> Enum.reduce(0, fn {value, _numbers} = equation, count ->
+    if Evaluator.is_possibly_true?(equation), do: count + value, else: count
+  end)
+```
+
+## Part 2
+
+TODO
