@@ -21,10 +21,10 @@ Mix.install([
 ## Input
 
 ```elixir
-equation_stream =
+equations =
   Kino.FS.file_path("day7_input.bin")
   |> File.stream!()
-  |> Stream.map(fn line ->
+  |> Enum.map(fn line ->
     [result, numbers] = String.split(line, ":")
     numbers = numbers
       |> String.split()
@@ -42,6 +42,22 @@ equation_stream =
   * `+ *`
   * `* *`
 * This grows exponentially, so it might be slow if we do it brute-force
+
+### Recursive stepping solution
+
+While implementing the above idea, I thought about the following better solution:
+
+* All numbers in my Input are positive
+* Adding two positive numbers makes the result bigger
+* Multiplying two positive numbers makes the result _much_ bigger
+* Idea:
+  1. Multiply both numbers
+  2. If this is less than the final result, move on to next number
+  3. If it's more than the final result, add them instead
+  4. If this is less than the final result, move on to next number
+  5. Else go back one step and try the other operator
+* This way, we go big early (using multiplications) and gradually make things smaller when needed
+* This does fewer computations than generating all possible combinations and evaluating each
 
 ```elixir
 defmodule Evaluator do
@@ -78,7 +94,7 @@ defmodule Evaluator do
   defp eval(a, b, :add), do: a + b
 end
 
-total_calibration_result = equation_stream
+total_calibration_result = equations
   |> Enum.reduce(0, fn {value, _numbers} = equation, count ->
     if Evaluator.is_possibly_true?(equation), do: count + value, else: count
   end)
