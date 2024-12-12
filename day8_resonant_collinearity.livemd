@@ -1,0 +1,98 @@
+<!-- livebook:{"file_entries":[{"name":"day8_input.bin","type":"attachment"}]} -->
+
+# Day 8: Resonant Collinearity
+
+```elixir
+Mix.install([
+  {:kino, "~> 0.14.0"}
+])
+```
+
+## Reading
+
+* **Input** is a map again, this time of antenas
+* Each antenna is marked with a digit/upcase/lowcase to indicate it's frequency
+* We're looking for _antinodes_ which are created when:
+  * two antenas with the same frequency
+  * along the line that connects them, it creates two new antinodes
+  * the new antinodes have the same distance to the antenna as the two antennas have to each other
+  * an antinot _can_ exist where there is already an antenna!
+  * antiondes out-of-bounds don't count
+* **Output** the number of _unique_ locations with antinodes
+
+## Input
+
+```elixir
+{_, map, bounds} =
+  Kino.FS.file_path("day8_input.bin")
+  |> File.read!()
+  |> String.to_charlist()
+  |> Enum.reduce({{0, 0}, %{}, {0, 0}}, fn
+    ?., {{x, y}, map, bounds} -> {{x + 1, y}, map, bounds}
+    ?\n, {{x, y}, map, _} -> {{0, y + 1}, map, {x, y + 1}}
+    char, {{x, y} = pos, map, bounds} ->
+      map = Map.update(map, char, [pos], fn positions -> [pos | positions] end)
+      {{x + 1, y}, map, bounds}
+  end)
+
+IO.inspect(map, label: "map")
+IO.inspect(bounds, label: "bounds")
+:ok
+```
+
+## Implementation
+
+This _seems_ similar to day 6. The algorithm this time can not work with windows (didn't work last time either), so we need to look through the whole map.
+
+Perhaps we'll just
+
+* iterate over all unique frequencies in the input
+* find all matching pairs of the same frequency (cross product)
+* for each, calculate their distance (Pythagorean theorem) and place the antinodes accordingly
+* add to set only if in-bounds
+* count entries in the set
+
+```elixir
+defmodule Helper do
+  def find_antinodes([{xa, ya}, {xb, yb}]) do
+    diff_x = xa-xb
+    diff_y = ya-yb
+    [{xa + diff_x, ya + diff_y}, {xb - diff_x, yb - diff_y}]
+  end
+
+  def all_pairs([current | rest], pairs) do
+    Enum.reduce(rest, pairs, fn other, acc -> [[current, other] | acc] end)
+    |> then(fn pairs -> all_pairs(rest, pairs) end)
+  end
+  def all_pairs([], pairs), do: pairs
+
+  def put_if_in_bounds(set, {x, y} = pos, {bound_x, bound_y}) do
+    if x < bound_x and x >= 0 and y < bound_y and y >= 0 do
+      MapSet.put(set, pos)
+    else
+      set
+    end
+  end
+end
+
+sum_unique_antinodes = map
+  |> Enum.reduce(MapSet.new(), fn {_frequency, antennas}, antinodes ->
+    antennas
+    |> Helper.all_pairs([])
+    |> Enum.reduce(antinodes, fn pair, antinodes ->
+      [a, b] = Helper.find_antinodes(pair)
+      antinodes
+      |> Helper.put_if_in_bounds(a, bounds)
+      |> Helper.put_if_in_bounds(b, bounds)
+    end)
+  end)
+  |> MapSet.size()
+```
+
+The Pythagorean theorem isn't actually relevant to the solution. It would give us fractional values, which we can't really use to calculate new map-positions (at least the float match is messy).
+
+Instead, we calculate how many _steps_ one would have to go in either direction to get from antenna A to antenna B. Then we add the same amount of stepps to the initial positions. This gives us what we want.
+
+## Part 2
+
+TODO
