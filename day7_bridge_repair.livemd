@@ -102,4 +102,58 @@ total_calibration_result = equations
 
 ## Part 2
 
-TODO
+* We have a new `concat` operator which combines two digits: `1 || 2 = 12`
+* Everything is still evaluated left-to-right, as before
+* **Output** is again the sum of all possible equations results
+* This number must obviously be _higher_ thant the previous one
+
+### Idea
+
+I can _probably_ just extend my code above to also include the new operator and use the exact same rules.
+
+The only interesting question is should there be a new order of operators? I'm gonna append it for now and see...
+
+```elixir
+defmodule EvaluatorV2 do
+  @operands [:mul, :add, :concat]
+
+  def is_possibly_true?({result, [first | rest]}) do
+    do_calc(result, rest, first, @operands)
+    |> case do
+      :ok -> true
+      _ -> false
+    end
+  end
+
+  defp do_calc(target, [number | rest] = numbers, current, [operand | fallback]) do
+    case eval(current, number, operand) do
+      result when result > target -> do_calc(target, numbers, current, fallback)
+      result -> do_calc(target, rest, result, @operands)
+    end
+    |> then(fn
+      :ok -> :ok
+      :step_back -> do_calc(target, numbers, current, fallback)
+    end)
+  end
+
+  defp do_calc(_target, _numbers, _current, []) do
+    # No more operators to try, need to step back
+    :step_back
+  end
+
+  defp do_calc(target, [], current, _operators) when target == current, do: :ok
+  defp do_calc(_target, [], _current, _operators), do: :step_back
+
+  defp eval(a, b, :mul), do: a * b
+  defp eval(a, b, :add), do: a + b
+  defp eval(a, b, :concat) do
+    to_string(a) <> to_string(b)
+    |> String.to_integer()
+  end
+end
+
+p2_total_calibration_result = equations
+  |> Enum.reduce(0, fn {value, _numbers} = equation, count ->
+    if EvaluatorV2.is_possibly_true?(equation), do: count + value, else: count
+  end)
+```
