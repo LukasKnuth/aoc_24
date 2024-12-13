@@ -66,8 +66,12 @@ defmodule Helper do
   end
   def all_pairs([], pairs), do: pairs
 
-  def put_if_in_bounds(set, {x, y} = pos, {bound_x, bound_y}) do
-    if x < bound_x and x >= 0 and y < bound_y and y >= 0 do
+  def in_bounds?({x, y}, {bound_x, bound_y}) do
+    x < bound_x and x >= 0 and y < bound_y and y >= 0
+  end
+
+  def put_if_in_bounds(set, pos, bounds) do
+    if in_bounds?(pos, bounds) do
       MapSet.put(set, pos)
     else
       set
@@ -95,4 +99,46 @@ Instead, we calculate how many _steps_ one would have to go in either direction 
 
 ## Part 2
 
-TODO
+Change to the rules:
+
+* antinodes are created _endlessly_ along the line created by the antenna pair
+* both antennas now also count as antinodes
+
+```elixir
+defmodule HelperV2 do
+  def find_antinodes([{xa, ya} = a, {xb, yb} = b], bounds) do
+    diff_x = xa-xb
+    diff_y = ya-yb
+    
+    Stream.repeatedly(fn -> :continue end)
+    |> Stream.with_index(1)
+    |> Enum.reduce_while([a, b], fn {_, step_count}, antinodes ->
+      down = {xa + diff_x * step_count, ya + diff_y * step_count}
+      up = {xb - diff_x * step_count, yb - diff_y * step_count}
+      
+      case {Helper.in_bounds?(down, bounds), Helper.in_bounds?(up, bounds)} do
+        {true, true} -> {:cont, [up | [down | antinodes]]}
+        {true, false} -> {:cont, [down | antinodes]}
+        {false, true} -> {:cont, [up | antinodes]}
+        {false, false} -> {:halt, antinodes}
+      end
+    end)
+  end
+end
+
+sum_unique_antinodes_v2 = map
+  |> Enum.reduce(MapSet.new(), fn {_frequency, antennas}, antinodes ->
+    antennas
+    |> Helper.all_pairs([])
+    |> Enum.reduce(antinodes, fn pair, antinodes ->
+      pair
+      |> HelperV2.find_antinodes(bounds)
+      |> Enum.reduce(antinodes, &MapSet.put(&2, &1))
+    end)
+  end)
+  |> MapSet.size()
+```
+
+### Afterthoughts
+
+The problem statement in this one wasn't that great. I think I spent more time figuring out what the sentences meant in regards to the examples than with the actual puzzle.
