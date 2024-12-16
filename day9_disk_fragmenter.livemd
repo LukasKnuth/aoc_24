@@ -1,0 +1,120 @@
+<!-- livebook:{"file_entries":[{"name":"day9_input.bin","type":"attachment"}]} -->
+
+# Day 9: Disk Fragmenter
+
+```elixir
+Mix.install([
+  {:kino, "~> 0.14.0"}
+])
+```
+
+## Reading
+
+* We're compressing somebodies hand-crafted filesystem
+* **Input** a "disk map" that continas the information about data on the disk
+  * each _digit_ indidactes **alternatingly** the size of a file
+  * OR the number of free space
+  * `12345` is a 1-block file, 2 block of free space, a 3-block file, 4 blocks of free space and a 5-block file
+* BEFORE re-arranging files we need to calculate the file-ID for each file
+  * starting at `0`, counting from the start of the map, `+1` for each file
+* We want to de-fragment the disk by
+  * moving each file BLOCK independently to the next free space
+  * the blocks of a single file can be fragmented/don't have to be continuous
+
+## Input
+
+```elixir
+# Useful for debugging
+render_as_example = fn parsed_list ->
+  Enum.reduce(parsed_list, "", fn
+    {:file, id}, acc -> acc <> to_string(id)
+    :free, acc -> acc <> "."
+  end) 
+  |> IO.inspect(label: "as example:")
+end
+
+disk_map =
+  Kino.FS.file_path("day9_input.bin")
+  |> File.read!()
+  |> String.codepoints()
+  |> Stream.reject(&Kernel.==(&1, "\n"))
+  |> Stream.map(&String.to_integer(&1))
+  |> Stream.zip(Stream.cycle([:file, :free]))
+  |> Enum.reduce({0, []}, fn
+    {0, _type}, {id, list} ->
+      {id, list}
+    
+    {size, :file}, {id, list} ->
+      list = Enum.reduce(1..size, list, fn _, list -> [{:file, id} | list] end)
+      {id + 1, list}
+      
+    {size, :free}, {id, list} ->
+      list = Enum.reduce(1..size, list, fn _, list -> [:free | list] end)
+      {id, list}
+  end)
+  |> then(fn {_, list} -> Enum.reverse(list) end)
+
+:ok
+```
+
+## Implementation
+
+* We don't need to keep the original _order_ of blocks - as long as the block is correctly identified as being from the same file as before
+* Blocks belonging to a single file don't have to be continious
+
+### Idea
+
+* parse the input to be an array of the full storage
+  * Use Tuple in Elixir, see if this can handle being used as an array
+* A block is `{:block, ID}` and space is `:free`
+
+```elixir
+defmodule Filesystem do
+  defstruct storage: {}
+  def new(storage) when is_list(storage) do
+    %__MODULE__{storage: List.to_tuple(storage)}
+  end
+
+  def checksum(%__MODULE__{storage: storage}) do
+    storage
+    |> Tuple.to_list()
+    |> Stream.with_index()
+    |> Enum.reduce(0, fn
+      {{:file, id}, index}, checksum -> checksum + (index * id)
+      {:free, _index}, checksum -> checksum
+    end)
+  end
+
+  def defrag(%__MODULE__{storage: storage} = fs) do
+    free_index = first_free_idx(fs)
+    {file_index, file_id} = last_file_idx(fs)
+    if free_index >= file_index do
+      {:halt, fs}
+    else
+      storage
+      |> put_elem(free_index, {:file, file_id})
+      |> put_elem(file_index, :free)
+      |> then(fn storage -> {:cont, %__MODULE__{fs | storage: storage}} end)
+    end
+  end
+
+  defp last_file_idx(%__MODULE__{storage: storage}) do
+    Enum.find(tuple_size(storage) - 1..0//-1, fn index ->
+      match?({:file, _id}, elem(storage, index))
+    end)
+    |> then(fn index when is_number(index) ->
+      {index, storage |> elem(index) |> elem(1)}
+    end)
+  end
+
+  defp first_free_idx(%__MODULE__{storage: storage}) do
+    Enum.find(0..tuple_size(storage) - 1, fn index ->
+      match?(:free, elem(storage, index))
+    end)
+  end
+end
+
+Stream.repeatedly(fn -> :next_step end)
+|> Enum.reduce_while(Filesystem.new(disk_map), fn _, fs -> Filesystem.defrag(fs) end)
+|> Filesystem.checksum()
+```
