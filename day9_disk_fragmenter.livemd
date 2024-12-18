@@ -87,8 +87,8 @@ defmodule Filesystem do
     end)
   end
 
-  def defrag_step(fs, nil), do: defrag_step(fs, {size(fs) - 1, 0})
-  def defrag_step(%__MODULE__{storage: storage} = fs, {prev_file_idx, prev_free_idx}) do
+  def move_blocks_step(fs, nil), do: move_blocks_step(fs, {size(fs) - 1, 0})
+  def move_blocks_step(%__MODULE__{storage: storage} = fs, {prev_file_idx, prev_free_idx}) do
     free_idx = first_free_idx(storage, prev_free_idx)
     {file_idx, file_id} = last_file_idx(storage, prev_file_idx)
     if free_idx >= file_idx do
@@ -122,7 +122,7 @@ end
 
 Stream.repeatedly(fn -> :next_step end)
 |> Enum.reduce_while({Filesystem.new(disk_map), nil}, fn _, {fs, pos} ->
-  case Filesystem.defrag_step(fs, pos) do
+  case Filesystem.move_blocks_step(fs, pos) do
     {:done, fs} -> {:halt, fs}
     {:ok, fs, pos} -> {:cont, {fs, pos}}
   end
@@ -142,3 +142,113 @@ All times measured on my MacBook Pro M2
 
 * Always search from outer bounds: 15.9sec
 * Search from previous pos: 3.7sec
+
+## Part 2
+
+* The moving of blocks above has fragmented most files accross the filesystem
+* This makes accessing them slow
+* We change the algorithm above to move _whole files_ where possible
+* We only move each file _once_
+* In order of decreasing file-ID (right to left)
+* If there is no space to move the file to, don't move it
+
+```elixir
+defmodule MoveWithoutFragmenting do
+  def move_blocks_step(fs, nil) do
+    boundary = Filesystem.size(fs)
+    file_start_pos = {boundary, boundary}
+    move_blocks_step(fs, file_start_pos)
+  end
+  
+  def move_blocks_step(%Filesystem{storage: storage} = fs, prev_file_pos) do
+    with {file_id, file_pos} <- last_file(storage, prev_file_pos) do
+      free_pos = first_free(storage, block_size(file_pos))
+      cond do
+        free_pos == :not_found ->
+          # No free space found, skip file
+          {:ok, fs, file_pos}
+        
+        is_after?(free_pos, file_pos) ->
+          # Won't move files backwards, skip
+          {:ok, fs, file_pos}
+        
+        true ->
+          storage
+          |> swap_range(file_id, file_pos, free_pos)
+          |> then(fn storage ->
+            fs = %Filesystem{fs | storage: storage}
+            {:ok, fs, file_pos}
+          end)
+      end
+    else
+      :not_found ->
+        # No files are left in the filesystem
+        {:done, fs}
+    end
+  end
+
+  def is_after?({a_start, _}, {_, b_stop}), do: a_start > b_stop
+  
+  def block_size({start, stop}), do: stop - start
+
+  defp swap_range(storage, file_id, {file_start, file_stop}, {free_start, free_stop}) do
+    file_size = file_stop - file_start
+    free_size = free_stop - free_start
+    if file_size != free_size do
+      IO.inspect({file_start, file_stop, file_size}, label: "file")
+      IO.inspect({free_start, free_stop, free_size}, label: "free")
+      raise "ASSERT file and free space differ!"
+    end
+    
+    Enum.reduce(file_start..file_stop, storage, fn idx, storage ->
+      put_elem(storage, idx, :free)
+    end)
+    |> then(&Enum.reduce(free_start..free_stop, &1, fn idx, storage ->
+      put_elem(storage, idx, {:file, file_id})
+    end))
+  end
+
+  defp last_file(storage, {prev_idx, _}) do
+    Enum.reduce_while((prev_idx - 1)..0//-1, :not_found, fn idx, acc -> 
+      case {acc, elem(storage, idx)} do
+        {:not_found, :free} -> {:cont, :not_found}
+        {:not_found, {:file, id}} -> {:cont, {id, {idx, idx}}}
+        {{id, {_, stop}}, {:file, found}} when id == found -> {:cont, {id, {idx, stop}}}
+        {{id, pos}, {:file, _other}} -> {:halt, {id, pos}}
+        {{id, pos}, :free} -> {:halt, {id, pos}}
+      end
+    end)
+  end
+
+  defp first_free(storage, size) do
+    Enum.reduce_while(0..tuple_size(storage) - 1, :not_found, fn idx, acc ->
+      case {acc, elem(storage, idx)} do
+        {:not_found, {:file, _id}} -> {:cont, :not_found}
+        {:not_found, :free} -> {:cont, {idx, idx}}
+        {{start, _}, :free} -> {:cont, {start, idx}}
+        {{start, stop}, {:file, _id}} when stop - start >= size -> {:halt, {start, start + size}}
+        {_pos, {:file, _id}} -> {:cont, :not_found}
+      end
+    end)
+    |> then(fn
+      {start, stop} when stop - start < size -> :not_found
+      res -> res
+    end)
+  end
+end
+
+Stream.repeatedly(fn -> :next_step end)
+|> Enum.reduce_while({Filesystem.new(disk_map), nil}, fn _, {fs, file_pos} ->
+  case MoveWithoutFragmenting.move_blocks_step(fs, file_pos) do
+    {:done, fs} -> {:halt, fs}
+    {:ok, fs, file_pos} -> {:cont, {fs, file_pos}}
+  end
+end)
+|> Filesystem.checksum()
+```
+
+### Optimization
+
+This code takes about 12sec on my MacBook Pro M2.
+
+It could be improved by collecting all file block IDs that have been moved in a `MapSet`. If the same file is then later found again, we don't even look for free space and just skip it immediately.
