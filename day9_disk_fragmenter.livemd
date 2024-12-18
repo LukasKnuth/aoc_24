@@ -154,30 +154,30 @@ All times measured on my MacBook Pro M2
 
 ```elixir
 defmodule MoveWithoutFragmenting do
-  def move_blocks_step(fs, nil) do
+  def move_blocks_step(fs, nil, nil) do
     boundary = Filesystem.size(fs)
     file_start_pos = {boundary, boundary}
-    move_blocks_step(fs, file_start_pos)
+    move_blocks_step(fs, MapSet.new(), file_start_pos)
   end
   
-  def move_blocks_step(%Filesystem{storage: storage} = fs, prev_file_pos) do
-    with {file_id, file_pos} <- last_file(storage, prev_file_pos) do
+  def move_blocks_step(%Filesystem{storage: storage} = fs, prev_moved, prev_file_pos) do
+    with {file_id, file_pos, prev_moved} <- last_file(storage, prev_moved, prev_file_pos) do
       free_pos = first_free(storage, block_size(file_pos))
       cond do
         free_pos == :not_found ->
           # No free space found, skip file
-          {:ok, fs, file_pos}
+          {:ok, fs, prev_moved, file_pos}
         
         is_after?(free_pos, file_pos) ->
           # Won't move files backwards, skip
-          {:ok, fs, file_pos}
+          {:ok, fs, prev_moved, file_pos}
         
         true ->
           storage
           |> swap_range(file_id, file_pos, free_pos)
           |> then(fn storage ->
             fs = %Filesystem{fs | storage: storage}
-            {:ok, fs, file_pos}
+            {:ok, fs, prev_moved, file_pos}
           end)
       end
     else
@@ -208,15 +208,29 @@ defmodule MoveWithoutFragmenting do
     end))
   end
 
-  defp last_file(storage, {prev_idx, _}) do
+  defp last_file(storage, prev_moved, {prev_idx, _}) do
     Enum.reduce_while((prev_idx - 1)..0//-1, :not_found, fn idx, acc -> 
       case {acc, elem(storage, idx)} do
-        {:not_found, :free} -> {:cont, :not_found}
-        {:not_found, {:file, id}} -> {:cont, {id, {idx, idx}}}
-        {{id, {_, stop}}, {:file, found}} when id == found -> {:cont, {id, {idx, stop}}}
-        {{id, pos}, {:file, _other}} -> {:halt, {id, pos}}
-        {{id, pos}, :free} -> {:halt, {id, pos}}
+        {:not_found, :free} ->
+          {:cont, :not_found}
+        {:not_found, {:file, id}} ->
+          if MapSet.member?(prev_moved, id) do
+            # Already moved this file before
+            {:cont, :not_found}
+          else
+            {:cont, {id, {idx, idx}}}
+          end
+        {{id, {_, stop}}, {:file, found}} when id == found ->
+          {:cont, {id, {idx, stop}}}
+        {{id, pos}, {:file, _other}} ->
+          {:halt, {id, pos}}
+        {{id, pos}, :free} ->
+          {:halt, {id, pos}}
       end
+    end)
+    |> then(fn
+      {id, pos} -> {id, pos, MapSet.put(prev_moved, id)}
+      res -> res
     end)
   end
 
@@ -238,10 +252,10 @@ defmodule MoveWithoutFragmenting do
 end
 
 Stream.repeatedly(fn -> :next_step end)
-|> Enum.reduce_while({Filesystem.new(disk_map), nil}, fn _, {fs, file_pos} ->
-  case MoveWithoutFragmenting.move_blocks_step(fs, file_pos) do
+|> Enum.reduce_while({Filesystem.new(disk_map), nil, nil}, fn _, {fs, history, file_pos} ->
+  case MoveWithoutFragmenting.move_blocks_step(fs, history, file_pos) do
     {:done, fs} -> {:halt, fs}
-    {:ok, fs, file_pos} -> {:cont, {fs, file_pos}}
+    {:ok, fs, history, file_pos} -> {:cont, {fs, history, file_pos}}
   end
 end)
 |> Filesystem.checksum()
@@ -249,6 +263,9 @@ end)
 
 ### Optimization
 
-This code takes about 12sec on my MacBook Pro M2.
+It could be improved by collecting all file IDs that have been moved in a `MapSet`. If the same file is then later found again, we don't even look for free space and just skip it immediately.
 
-It could be improved by collecting all file block IDs that have been moved in a `MapSet`. If the same file is then later found again, we don't even look for free space and just skip it immediately.
+* unoptimized (MacBook Pro M2): 12sec
+* optimized (MacBook Pro M2): 8.6sec
+
+The 28% performance increase comes at the cost of making the code a good bit uglier and less focused. Check this files history in Git to see the less ugly version :)
