@@ -1,0 +1,179 @@
+<!-- livebook:{"file_entries":[{"name":"day10_input.bin","type":"attachment"}]} -->
+
+# Day 10: Hoof It
+
+```elixir
+Mix.install([
+  {:kino, "~> 0.14.0"}
+])
+```
+
+## Reading
+
+* We're building hiking routes from a topography map
+* **Input** the topography map
+  * a 2D map
+  * each digit representing the hight of terrain at the given position
+* There are rules for what is accepted as a trail
+  * as long as possible
+  * always starts at hight 0 and ends at hight 9
+  * every new step must increase by 1 from previous hight
+  * there are no _diagonal_ steps
+* A _trailhead_ is a position from which one or more trails start (height 0)
+  * its _score_ is the number of trails that end in a `9`, starting from the head
+  * the trails can partially cover each other
+* **Output** Sum of all scores of each trailhead.
+
+## Input
+
+```elixir
+content =
+  Kino.FS.file_path("day10_input.bin")
+  |> File.read!()
+
+{_, map, heads} =
+  #"89010123\n78121874\n87430965\n96549874\n45678903\n32019012\n01329801\n10456732"
+  content
+  |> String.to_charlist()
+  |> Enum.reduce({{0, 0}, %{}, []}, fn
+    ?\n, {{_, y}, map, heads} -> {{0, y + 1}, map, heads}
+    ?0, {{x, y}, map, heads} -> {{x + 1, y}, Map.put(map, {x, y}, 0), [{x, y} | heads]}
+    c, {{x, y}, map, heads} -> {{x + 1, y}, Map.put(map, {x, y}, String.to_integer(<<c>>)), heads}
+  end)
+```
+
+## Implementation
+
+The simplest way would be to build a recursive algorithm:
+
+* takes a given starting position
+* tries all sourrounding positions to check for next step
+* is a position is valid, recurse into it
+* Once we either reach `9` or a dead-end, go back out
+* try all directions in each invocation and pass found routes back
+
+```elixir
+defmodule TrailScorer do
+  def score_from(map, pos) when is_map(map) and is_tuple(pos) do
+    {score, _} = do_score(map, pos, 0, MapSet.new())
+    score
+  end
+
+  defp do_score(map, pos, score, visited) do
+    [:up, :right, :down, :left]
+    |> Enum.reduce({score, visited}, fn direction, {score, visited} ->
+      next_pos = next_position(direction, pos)
+      case take_step(map, pos, next_pos) do
+        {:ok, 9} ->
+          # End of a full trial!
+          if not MapSet.member?(visited, next_pos) do
+            # new finish position
+            {score + 1, MapSet.put(visited, next_pos)}
+          else
+            {score, visited}
+          end
+
+        {:ok, _height} ->
+          # Still on valid trail, continue...
+          do_score(map, next_pos, score, visited)
+
+        :invalid ->
+          # Not a valid way forward
+          {score, visited}
+      end
+    end)
+  end
+
+  defp take_step(map, from, to) do
+    h_from = Map.get(map, from, :out_of_bounds)
+    h_to = Map.get(map, to, :out_of_bounds)
+    case {h_from, h_to} do
+      {:out_of_bounds, _} -> :invalid
+      {_, :out_of_bounds} -> :invalid
+      {h_from, h_to} when h_from + 1 == h_to -> {:ok, h_to}
+      _ -> :invalid # hight difference too great
+    end
+  end
+
+  defp next_position(direction, {x, y}) do
+    case direction do
+      :up -> {x, y + 1}
+      :down -> {x, y - 1}
+      :left -> {x - 1, y}
+      :right -> {x + 1, y}
+    end
+  end
+end
+
+heads
+|> Enum.reduce(0, fn trailhead, count ->
+  score = TrailScorer.score_from(map, trailhead)
+  count + score
+end)
+```
+
+The Puzzle statement is not clear on this: Trails that end in _the same position_ **do not count multiple times**, even if there are _different_ trails to that same position.
+
+This is only clear by looking at the examples and their scoring. I have added a `MapSet` to track visited trail ends and the scoring is now correct.
+
+## Part 2
+
+* We're now couting the _rating_ of a trail
+  * This is the number of _distinct_ hiking trails that begin at the trail head
+* This sounds very much like what I calculated in step 1 before introducing the visited history...
+
+```elixir
+defmodule TrailRater do
+  def rate_from(map, pos) when is_map(map) and is_tuple(pos) do
+    do_rate(map, pos, 0)
+  end
+
+  defp do_rate(map, pos, rating) do
+    [:up, :right, :down, :left]
+    |> Enum.reduce(rating, fn direction, rating ->
+      next_pos = next_position(direction, pos)
+      case take_step(map, pos, next_pos) do
+        {:ok, 9} ->
+          # End of a full trial!
+          rating + 1
+
+        {:ok, _height} ->
+          # Still on valid trail, continue...
+          do_rate(map, next_pos, rating)
+
+        :invalid ->
+          # Not a valid way forward
+          rating
+      end
+    end)
+  end
+
+  defp take_step(map, from, to) do
+    h_from = Map.get(map, from, :out_of_bounds)
+    h_to = Map.get(map, to, :out_of_bounds)
+    case {h_from, h_to} do
+      {:out_of_bounds, _} -> :invalid
+      {_, :out_of_bounds} -> :invalid
+      {h_from, h_to} when h_from + 1 == h_to -> {:ok, h_to}
+      _ -> :invalid # hight difference too great
+    end
+  end
+
+  defp next_position(direction, {x, y}) do
+    case direction do
+      :up -> {x, y + 1}
+      :down -> {x, y - 1}
+      :left -> {x - 1, y}
+      :right -> {x + 1, y}
+    end
+  end
+end
+
+heads
+|> Enum.reduce(0, fn trailhead, count ->
+  rating = TrailRater.rate_from(map, trailhead)
+  count + rating
+end)
+```
+
+Well, that was a bit too easy...
