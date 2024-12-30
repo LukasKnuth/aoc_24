@@ -66,4 +66,78 @@ end)
 |> then(fn stones -> length(stones) end)
 ```
 
+## Part 2
+
+This is the exact same thing, just with more simulation steps now.
+
+The **problem** is that this works until about iteration 40 where a single `simulation/1` step takes multiple seconds, increasing in exponential fassion.
+
+We need to further optimize this. I did small things like replacing `String.length/1` with `byte_size/1` (since we know its only numbers, no need to handle UTF-8 stuff) and replacing `Enum.flat_map` with `Enum.reduce` with list prepending. None of this _really_ made a large difference though.
+
+Thorugh measuring with `:timer.tc/3`, I _can_ tell that the single `step/1` invocation stays fast (even with larger numbers) but the operation on the whole array seems to slow everything down.
+
+```elixir
+defmodule FastWeirdStones do
+  require Integer
+  
+  def simulate(stones) when is_map(stones) do
+    Enum.reduce(stones, %{}, fn {stone, count}, acc ->
+      case step(stone) do
+        result when is_number(result) ->
+          Map.update(acc, result, count, fn current -> current + count end)
+
+        {left, right} ->
+          acc
+          |> Map.update(left, count, fn current -> current + count end)
+          |> Map.update(right, count, fn current -> current + count end)
+      end
+    end)
+  end
+
+  defp step(stone) do
+    as_string = to_string(stone)
+    digits = byte_size(as_string)
+    
+    cond do
+      stone == 0 ->
+        1
+
+      Integer.is_even(digits) ->
+        {l, r} = String.split_at(as_string, div(digits, 2))
+        {String.to_integer(l), String.to_integer(r)}
+
+      true ->
+        stone * 2024
+    end
+  end
+end
+
+Enum.reduce(initial_stones, %{}, fn stone, map ->
+  Map.update(map, stone, 1, fn count -> count + 1 end)
+end)
+|> then(&Enum.reduce(1..75, &1, fn _i, stone_map ->
+  FastWeirdStones.simulate(stone_map)
+end))
+|> Enum.reduce(0, fn {_stone, count}, acc -> acc + count end)
 ```
+
+I _think_ this line in the problem description is a red herring:
+
+> No matter how the stones change, their order is preserved, and they stay on their perfectly straight line.
+
+The order of the stones is actually irrelevant for the final result, which is just the _count_.
+
+Looking at the initial numbers and rules, we can determine a few things:
+
+* The number of rocks will only ever _increase_
+* Any number will _eventually_ be broken down into one of nine single digits
+* Each operation only looks at the single number in isolation, no sourroundings are important
+
+The idea came mainly because of the rule for `0`, an operation that we could perform "in bulk" by simply taking all zeros. Since we don't need the final assortment of stones but just the _count_, the idea was to simply store all unique numbers and the count of how often they currently exist.
+
+Then, we can run all operations "in bulk" on all of those numbers. Eventually, these buckets will get larger and larger, making the algorithm more efficient as we go.
+
+### Mesaurements
+
+* Initial from part 1 (MacBook Pro M2): 48 seconds for iteration 30 alone
+* Optimized with Map: 0.2ms for `175` iterations
