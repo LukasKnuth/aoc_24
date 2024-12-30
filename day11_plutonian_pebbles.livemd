@@ -1,0 +1,69 @@
+<!-- livebook:{"file_entries":[{"name":"day11_input.bin","type":"attachment"}]} -->
+
+# Day 11: Plutonian Pebbles
+
+```elixir
+Mix.install([
+  {:kino, "~> 0.14.0"}
+])
+```
+
+## Reading
+
+* There are a number of stones in a straight line
+* They all simulate the follwing rules _left to right_ (when blinking):
+  * if stone has number `0`, it changes to `1`
+  * if stone has even _number of digits_ it splits into two stones
+    * the left half of the digits go onto the new left stone
+    * the right half of the digits go onto the new right stone
+    * _leading_ zeros are simply dropped (can use integers)
+  * if no other rule applies, multiply the stones number by `2024`
+* The _order_ is **always preserved**
+* **Input** the numbers on the initial stones
+
+> The text says the stones change "simultaniously" but then all examples evaluate the rules left-to-right. I'm not sure if this is an oversight on their/my part of if its just a poorly chosen word.
+
+## Input
+
+```elixir
+initial_stones =
+  Kino.FS.file_path("day11_input.bin")
+  |> File.read!()
+  |> String.split()
+  |> Enum.map(&String.to_integer/1)
+```
+
+## Implementation
+
+```elixir
+defmodule WeirdStones do
+  require Integer
+
+  defp count_digits(nr), do: nr |> to_string() |> String.length()
+  
+  def simulate(stones) when is_list(stones) do
+    Enum.flat_map(stones, fn stone ->
+      digits = count_digits(stone)
+      
+      cond do
+        stone == 0 ->
+          [1]
+
+        Integer.is_even(digits) ->
+          {l, r} = stone |> to_string() |> String.split_at(div(digits, 2))
+          [String.to_integer(l), String.to_integer(r)]
+
+        true ->
+          [stone * 2024]
+      end
+    end)
+  end
+end
+
+Enum.reduce(1..25, initial_stones, fn _i, stones ->
+  WeirdStones.simulate(stones)
+end)
+|> then(fn stones -> length(stones) end)
+```
+
+```
