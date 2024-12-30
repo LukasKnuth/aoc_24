@@ -125,17 +125,11 @@ I _think_ this line in the problem description is a red herring:
 
 > No matter how the stones change, their order is preserved, and they stay on their perfectly straight line.
 
-The order of the stones is actually irrelevant for the final result, which is just the _count_.
-
-Looking at the initial numbers and rules, we can determine a few things:
-
+* The order of the stones is actually irrelevant for the final result, we just need the _count_.
 * The number of rocks will only ever _increase_
-* Any number will _eventually_ be broken down into one of nine single digits
 * Each operation only looks at the single number in isolation, no sourroundings are important
 
-The idea came mainly because of the rule for `0`, an operation that we could perform "in bulk" by simply taking all zeros. Since we don't need the final assortment of stones but just the _count_, the idea was to simply store all unique numbers and the count of how often they currently exist.
-
-Then, we can run all operations "in bulk" on all of those numbers. Eventually, these buckets will get larger and larger, making the algorithm more efficient as we go.
+The idea came mainly because of the rule for `0`, an operation that we could perform "in bulk" by simply taking all zeros. Since we don't need the final assortment of stones but just the _count_, the idea was to simply store each unique number once and the count of how often they currently exist. With this, we can then run all operations "in bulk" for a given number.
 
 ### Mesaurements
 
