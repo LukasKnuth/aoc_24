@@ -1,0 +1,144 @@
+<!-- livebook:{"file_entries":[{"name":"day12_input.bin","type":"attachment"}]} -->
+
+# Day 12: Garden Groups
+
+```elixir
+Mix.install([
+  {:kino, "~> 0.14.0"}
+])
+```
+
+## Reading
+
+* We're fencing in regions of a garden plot
+* **Input** the Map of the garden plots
+  * Each plot grows one specific thing
+  * Two touching fields (vertical or horizontal) of the same thing make a region
+* We calculate the regions
+  * _area_: The number of plots the region contains
+  * _perimeter_: The number of sides a region has
+* A region can appear _within_ another region
+  * This means the _perimeter_ of a containing region is it's own outer sides + all inner sides of the contained regions
+* **Output** the _price_ for each region is `area * perimeter`
+  * The full puzzle output is the sum of all prices
+
+## Input
+
+```elixir
+garden_map =
+  Kino.FS.file_path("day12_input.bin")
+  |> File.read!()
+  |> String.split("\n")
+  |> Enum.map(fn line -> line |> String.to_charlist() |> List.to_tuple() end)
+  |> List.to_tuple()
+```
+
+## Implementation
+
+**Idea**: We can run through the map _once_ with a recursive algorithm to find adjacent plots of the same type:
+
+* Have a `visited` MapSet of all visited plots
+* Have a `region` MapSet of the _current_ region we're adding to
+* For each plot, if it's already `visited`, skip it
+* If not, add to both `region` and `visited` and generate positions _around_ the current one
+* For each position, recursively call the function
+* The function either returns `:visited` or `{:region, MapSet}`
+
+Each `MapSet` then contains a region, potentially with holes. Calculating the _area_ is just `MapSet.size/1`. Calculating the _perimeter_ is harder:
+
+* For each plot, we count the number of adjacent plots of the same type
+  * 0 adjacent = count 4 (fenced in on all sides)
+  * 1 adjacent = count 3 (one side is open to its adjacent field)
+  * 2 adjacent = count 2 (two sides are open to the adjacent fields)
+  * 3 adjacent = count 1
+  * 4 adjacent = count 0
+* Then we sum all counts and we're done.
+
+The number of fences comes from visualizing how many fence pieces you'd need to fence in a single box. The more adjacent fields, the more open the box is to each side.
+
+```elixir
+defmodule GardenPlots do
+  def row_count(map), do: tuple_size(map)
+  def cel_count(map, row) do
+    if row >= 0 and row < row_count(map) do
+      map |> elem(row) |> tuple_size()
+    else
+      0
+    end
+  end
+  
+  defp adjacent({x, y}), do: [{x + 1, y}, {x - 1, y}, {x, y + 1}, {x, y - 1}]
+  
+  defp plot_at(map, {x, y}) do
+    if y >= 0 and y < row_count(map) and x >= 0 and x < cel_count(map, y) do
+      map |> elem(y) |> elem(x)
+    else
+      :out_of_bounds
+    end
+  end
+
+  def find_region(map, pos, visited) when is_tuple(map) do
+    with false <- MapSet.member?(visited, pos),
+         type when is_number(type) <- plot_at(map, pos) do
+      do_find_region(map, pos, visited, type, MapSet.new([pos]))
+    else
+      :out_of_bounds -> :visited
+      true -> :visited
+    end
+  end
+
+  defp do_find_region(map, start, visited, plot_type, region) do
+    start
+    |> adjacent()
+    |> Enum.reduce({visited, region}, fn pos, {visited, region} = acc ->
+      cond do
+        MapSet.member?(visited, pos) ->
+          acc
+
+        plot_at(map, pos) == plot_type ->
+          visited = MapSet.put(visited, pos)
+          region = MapSet.put(region, pos)
+          do_find_region(map, pos, visited, plot_type, region)
+
+        true ->
+          # Not the same plot type
+          acc
+      end
+    end)
+  end
+
+  def region_price(region) do
+    region_area(region) * region_perimeter(region)
+  end
+
+  defp region_perimeter(region) do
+    Enum.reduce(region, 0, fn plot_pos, fences ->
+      plot_pos
+      |> adjacent()
+      |> Stream.filter(&MapSet.member?(region, &1))
+      |> Enum.count()
+      |> case do
+        0 -> fences + 4
+        1 -> fences + 3
+        2 -> fences + 2
+        3 -> fences + 1
+        4 -> fences
+      end
+    end)
+  end
+  
+  defp region_area(region), do: MapSet.size(region)
+end
+
+Enum.reduce(0..GardenPlots.row_count(garden_map), {MapSet.new(), 0}, fn y, {visited, total} ->
+  Enum.reduce(0..GardenPlots.cel_count(garden_map, y), {visited, total}, fn x, {visited, total} ->
+    case GardenPlots.find_region(garden_map, {x, y}, visited) do
+      :visited -> {visited, total}
+      {visited, region} -> 
+        price = GardenPlots.region_price(region)
+        {visited, total + price}
+    end
+  end)
+end)
+|> then(fn {_visited, total_price} -> total_price end)
+```
