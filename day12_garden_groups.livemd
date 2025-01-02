@@ -1,4 +1,4 @@
-<!-- livebook:{"file_entries":[{"name":"day12_input.bin","type":"attachment"}]} -->
+<!-- livebook:{"file_entries":[{"name":"day12_initial_flaw.svg","type":"attachment"},{"name":"day12_input.bin","type":"attachment"},{"name":"day12_plot_fences.svg","type":"attachment"}]} -->
 
 # Day 12: Garden Groups
 
@@ -28,6 +28,8 @@ Mix.install([
 garden_map =
   Kino.FS.file_path("day12_input.bin")
   |> File.read!()
+  #"RRRRIICCFF\nRRRRIICCCF\nVVRRRCCFFF\nVVRCCCJFFF\nVVVVCJJCFE\nVVIVCCJJEE\nVVIIICJJEE\nMIIIIIJJEE\nMIIISIJEEE\nMMMISSJEEE"
+  #"AAAAAA\nAAABBA\nAAABBA\nABBAAA\nABBAAA\nAAAAAA"
   |> String.split("\n")
   |> Enum.map(fn line -> line |> String.to_charlist() |> List.to_tuple() end)
   |> List.to_tuple()
@@ -46,12 +48,10 @@ garden_map =
 
 Each `MapSet` then contains a region, potentially with holes. Calculating the _area_ is just `MapSet.size/1`. Calculating the _perimeter_ is harder:
 
-* For each plot, we count the number of adjacent plots of the same type
-  * 0 adjacent = count 4 (fenced in on all sides)
-  * 1 adjacent = count 3 (one side is open to its adjacent field)
-  * 2 adjacent = count 2 (two sides are open to the adjacent fields)
-  * 3 adjacent = count 1
-  * 4 adjacent = count 0
+* For each plot, we count the number of adjacent plots of the same type:
+
+![](files/day12_plot_fences.svg)
+
 * Then we sum all counts and we're done.
 
 The number of fences comes from visualizing how many fence pieces you'd need to fence in a single box. The more adjacent fields, the more open the box is to each side.
@@ -136,6 +136,106 @@ Enum.reduce(0..GardenPlots.row_count(garden_map), {MapSet.new(), 0}, fn y, {visi
       :visited -> {visited, total}
       {visited, region} -> 
         price = GardenPlots.region_price(region)
+        {visited, total + price}
+    end
+  end)
+end)
+|> then(fn {_visited, total_price} -> total_price end)
+```
+
+## Part 2
+
+* We're only changing how the price is calculated!
+* Instead of the number of fences, we want the number of _sides_
+  * Fences in the same direction next to each other create a side
+  * A 8x8 field has 4 sides
+* New price formular: `area * sides`
+
+### Idea
+
+We'll look at each plot and it's adjacent plots again. This time, we'll store in which _direction_ the fence must be installed and its primary coordinate (x for horizontal, y for vertical).
+
+We can store this in a `MapSet`, which will get rid of any duplicates. We're left with a list of all unique vertical/horizontal fences that we now only need to `MapSet.size/1`.
+
+### 2nd Try
+
+The initial idea was flawed because it would put two fences on the same horizontal/vertical line in one side, even if there was stuff between them:
+
+![](files/day12_initial_flaw.svg)
+
+Instead, we need to note down the full coordinates of each fence. We can then order all fences in the same direction so that fences of neighboring plots are grouped next to each other. Fences that are in the same direction but at different vertical/horizontal lines (depending on their direction) would be a new group.
+
+We can then run through the ordered list and check if the previous fence is a direct neighbor to the current one. If so, **no** new side is needed (the current one is continued). If not, we need a new side.
+
+```elixir
+defmodule BulkDiscountCalculator do
+  def region_price(region) do
+    region_area(region) * region_sides(region)
+  end
+
+  defp region_area(region), do: MapSet.size(region)
+
+  defp region_sides(region) do
+    Enum.reduce(region, %{}, fn pos, acc ->
+      acc
+      |> maybe_add_fence(region, pos, :top)
+      |> maybe_add_fence(region, pos, :bottom)
+      |> maybe_add_fence(region, pos, :left)
+      |> maybe_add_fence(region, pos, :right)
+    end)
+    |> Enum.reduce(0, fn {direction, fences}, acc ->
+      [first | rest] = sort_fence_lines(fences, direction)
+      
+      {side_count, _} = Enum.reduce(rest, {1, first}, fn pos, {count, prev} ->
+        case one_off?(direction, prev, pos) do
+          true -> {count, pos}
+          false -> {count + 1, pos}
+        end
+      end)
+
+      acc + side_count
+    end)
+  end
+
+  defp one_off?(:top, {xa, ya}, {xb, yb}), do: ya == yb and xa + 1 == xb
+  defp one_off?(:bottom, {xa, ya}, {xb, yb}), do: ya == yb and xa + 1 == xb
+  defp one_off?(:left, {xa, ya}, {xb, yb}), do: xa == xb and ya + 1 == yb
+  defp one_off?(:right, {xa, ya}, {xb, yb}), do: xa == xb and ya + 1 == yb
+
+  defp sort_fence_lines(fences, direction) when direction in [:top, :bottom] do
+    Enum.group_by(fences, fn {_, y} -> y end)
+    |> Enum.flat_map(fn {_y, group} -> Enum.sort_by(group, fn {x, _} -> x end) end)
+  end
+  defp sort_fence_lines(fences, direction) when direction in [:left, :right] do
+    Enum.group_by(fences, fn {x, _} -> x end)
+    |> Enum.flat_map(fn {_x, group} -> Enum.sort_by(group, fn {_, y} -> y end) end)
+  end
+
+  defp maybe_add_fence(fences, region, plot, direction) do
+    if MapSet.member?(region, next_pos(plot, direction)) do
+      # adjacent position is also part of region, no fence needed
+      fences
+    else
+      Map.update(fences, direction, MapSet.new([plot]), &MapSet.put(&1, plot))
+    end
+  end
+
+  defp next_pos({x, y}, direction) do
+    case direction do
+      :top -> {x, y - 1}
+      :bottom -> {x, y + 1}
+      :left -> {x - 1, y}
+      :right ->{x + 1, y}
+    end
+  end
+end
+
+Enum.reduce(0..GardenPlots.row_count(garden_map), {MapSet.new(), 0}, fn y, {visited, total} ->
+  Enum.reduce(0..GardenPlots.cel_count(garden_map, y), {visited, total}, fn x, {visited, total} ->
+    case GardenPlots.find_region(garden_map, {x, y}, visited) do
+      :visited -> {visited, total}
+      {visited, region} -> 
+        price = BulkDiscountCalculator.region_price(region)
         {visited, total + price}
     end
   end)
