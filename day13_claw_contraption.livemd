@@ -1,0 +1,138 @@
+<!-- livebook:{"file_entries":[{"name":"day13_input.bin","type":"attachment"}]} -->
+
+# Day 13: Claw Contraption
+
+```elixir
+Mix.install([
+  {:kino, "~> 0.14.0"}
+])
+```
+
+## Reading
+
+* We're in the Arcade on the claw machine
+* There are two inputs:
+  * **A Button**, costs 3 _tokens_ to press
+  * **B Button**, costs 1 _token_ to press
+  * button moves claw to the right (on x-axis) or forward (on y-axis)
+* A machine has one _price_
+  * to win it, the _claw_ must be EXACTLY above it
+  * initial claw position is always `0|0`
+* **Input** is the following:
+  * How much does Button A move the crane
+  * How much does Button B move the crane
+  * Where exactly is the price
+  * Empty line to mean a new machine with different config
+* **Output**: The minimum number of tokens required to win all prizes
+  * NOTE: Some machines can't be won!
+  * We can early-exit if a single Button must be pressed more than 100 times
+
+## Input
+
+```elixir
+defmodule MachineConf do
+  defstruct btn_a: {0,0}, btn_b: {0,0}, prize: {0,0}
+
+  def new(), do: %__MODULE__{}
+
+  def parse(conf, "Button A: " <> rest), do: %__MODULE__{conf | btn_a: parse_claw_change(rest)}
+  def parse(conf, "Button B: " <> rest), do: %__MODULE__{conf | btn_b: parse_claw_change(rest)}
+  def parse(conf, "Prize: " <> rest), do: %__MODULE__{conf | prize: parse_pos(rest)}
+  def parse(_conf, "\n"), do: :done
+
+  defp parse_claw_change(changes) do
+    [_, x, _, y] = String.split(changes, ~w(+ ,))
+    x = String.to_integer(x)
+    y = y |> String.trim_trailing() |> String.to_integer()
+    {x, y}
+  end
+
+  defp parse_pos(prize_pos) do
+    [_, x, _, y] = String.split(prize_pos, ~w(= ,))
+    x = String.to_integer(x)
+    y = y |> String.trim_trailing() |> String.to_integer()
+    {x, y}
+  end
+end
+
+claw_machines =
+  Kino.FS.file_path("day13_input.bin")
+  |> File.stream!()
+  |> Enum.reduce({[], MachineConf.new()}, fn line, {acc, conf} ->
+    case MachineConf.parse(conf, line) do
+      :done -> {[conf | acc], MachineConf.new()}
+      conf -> {acc, conf}
+    end
+  end)
+  |> then(fn {list, last} ->
+    # The file doesn't end in an empty line, so we'll add the last (complete)
+    # machine config to the list as well.
+    [last | list]
+  end)
+
+examples = [
+  # NOTE: using this syntax because the "MachineConf" struct is declared in this
+  # same context and not available. It _can_ however be used in functions, like
+  # `MachineConf.new()`.
+  %{MachineConf.new() | btn_a: {94, 34}, btn_b: {22, 67}, prize: {8400, 5400}},
+  %{MachineConf.new() | btn_a: {26, 66}, btn_b: {67, 21}, prize: {12748, 12176}},
+  %{MachineConf.new() | btn_a: {17, 86}, btn_b: {84, 37}, prize: {7870, 6450}},
+  %{MachineConf.new() | btn_a: {69, 23}, btn_b: {27, 71}, prize: {18641, 10279}}
+]
+
+:ok
+```
+
+## Implementation
+
+* The order of pressing the buttons does not matter
+* _Theoretically_, the cheaper button could move you three times less than the expensive one - can't just greedily press cheap to get close
+  * From the input, most configs have one Button bring you _right_ and the other bring _forward_
+
+### Idea
+
+* recursive algorithm that starts at the modulo of the B button movement (cheaper one) of the goal
+* start going "backwards" and try pressing the expensive button
+* if we are gone back to the start position, it's not solveable
+
+```elixir
+defmodule CheapWinner do
+  def solve(%MachineConf{} = config) do
+    do_solve({0, 0}, 0, [:btn_b, :btn_a], config)
+  end
+
+  defp do_solve(_, _, [], _), do: :error
+  defp do_solve(current_pos, cost, [btn | rest] = buttons, %MachineConf{prize: prize} = conf) do
+    change = fetch_change(conf, btn)
+    case press_button(current_pos, change, prize) do
+      {:cont, new_pos} -> do_solve(new_pos, add_cost(cost, btn), buttons, conf)
+      :found -> {:ok, add_cost(cost, btn)}
+      :error -> do_solve(current_pos, cost, rest, conf)
+    end
+    |> then(fn
+      :error -> do_solve(current_pos, cost, rest, conf)
+      result -> result
+    end)
+  end
+
+  defp fetch_change(config, button), do: Map.fetch!(config, button)
+  
+  defp add_cost(cost, :btn_a), do: cost + 3
+  defp add_cost(cost, :btn_b), do: cost + 1
+
+  defp press_button({x_pos, y_pos}, {x_change, y_change}, {x_prize, y_prize}) do
+    case {x_pos + x_change, y_pos + y_change} do
+      {x, y} when x < x_prize and y < y_prize -> {:cont, {x, y}}
+      {x, y} when x == x_prize and y == y_prize -> :found
+      _ -> :error
+    end
+  end
+end
+
+Enum.reduce(claw_machines, 0, fn machine, total ->
+  case CheapWinner.solve(machine) do
+    {:ok, cost} -> total + cost
+    :error -> total
+  end
+end)
+```
