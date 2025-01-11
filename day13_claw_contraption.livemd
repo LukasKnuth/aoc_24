@@ -136,3 +136,96 @@ Enum.reduce(claw_machines, 0, fn machine, total ->
   end
 end)
 ```
+
+## Part 2
+
+The prize coordinates are moved by `10000000000000` units each
+
+* This makes the solution above take too long to complete.
+* The early exit condition of "less than 100 presses per button" has now been removed
+* Running the part 1 solution for a single new machine takes too long
+
+### Idea
+
+* From looking at the part 1 example `80*94 + 40*22 = 8400` we can write this with variables as `94a + 22b = 8400` -> This is a linear equation
+* And thats where my rust math left me behind. Fortunatly, I found [David Brownmans](https://advent-of-code.xavd.id/writeups/2024/day/13/) solution writeup which helped me make sense of the math.
+
+We have two linear equations for each point, where we use `a` as the number of times we press the A-Button and `b` for the number of times we press the B-Button.
+
+* The first example is $$a = (94|34)$$ and $$b = (22,67)$$ with the prize at $$(8400|5400)$$
+* We can create two linear equations from this, one for each axis:
+  * X-axis: $$94a + 22b = 8400$$
+  * Y-axis: $$34a + 67b = 5400$$
+
+#### Find A
+
+* To solve an equation with _two_ unknowns, we must "get rid of" (replace) one of the unknowns
+  * We can do this by subtracting one equation from the other
+  * This allows us to remove two variables _if_ they have the same factor
+  * We must change _both_ linear equations...
+* To get the same factor for `b` on both sides, we'll multiply...
+  * the x-axis equation with the y factor `67`: $$(67 * 94a) + (67 * 22b) = 67 * 8400$$
+  * the y-axis equation with the x factor `22`: $$(22 * 34a) + (22 * 67b) = 22 * 5400$$
+* If we now subtract both equations from each other, we get:
+  * $$(67 * 94a + 67 * 22b) - (22*34a + 22*67b) = (67*8400) - (22*5400)$$
+  * Our `b` now has the same factor on both sides of the subtraction (just ordered differently)
+  * We can remove both of them: $$67*94a - 22*34a = (67*8400) - (22*5400)$$
+* At this point we can solve for `a`:
+  * Write the above with explicit brackets: $$(67*94)*a - (22*34)*a = (67*8400) - (22*5400)$$
+  * Combine both factors: $$(67*94 - 22*34)*a = (67*8400) - (22*5400)$$
+  * Divide both sides by the factors: $$a = \frac{(67*8400) - (22*5400)}{(67*94) - (22*34)}$$
+  * Result: $$a = 80$$
+* We can now calculate the above formula with _Integers_ to get a value for `a`
+
+#### Find B
+
+* We can use the original linear equation for the Y-axis and insert the previously calculated `a` value: $$34*80+67b = 5400$$
+* Again we'll divide both sides by the factor: $$\frac{34*80}{67} +b = \frac{5400}{67}$$
+* Now subtract the fraction from both sides: $$b = \frac{5400-34*80}{67}$$
+  * Result: $$b = 40$$
+* Again we can calcualte the above with _Integers_ to get our `b` value in-code
+
+#### Hit test
+
+The solution from the blog uses Pythons `IsInteger()` method to test if the equations results are whole numbers.
+If they are not whole numbers, the machien isn't solvable since we can't press a button partially.
+
+In Elixir, there is no such method (that I could find), so instead we just multiply the result for each button with the axis changes and see if that is exaclty the prizes position.
+
+```elixir
+defmodule UnitCorrectCheapWinner do
+  @unit_factor 10_000_000_000_000  
+  
+  def solve(%MachineConf{prize: {prize_x, prize_y}, btn_a: {ax, ay}, btn_b: {bx, by}}) do
+    {px, py} = {prize_x + @unit_factor, prize_y + @unit_factor}
+
+    # Use `div` for Integer division
+    a_presses = div((by * px) - (bx * py), (by * ax) - (bx * ay))
+    b_presses = div(py - (ay * a_presses), by)
+
+    # Verify we hit the target. If not, the equation above gives a comma result
+    # but we can't press "half a button", so the machine isn't solvable
+    hit_x = a_presses * ax + b_presses * bx == px
+    hit_y = a_presses * ay + b_presses * by == py
+    
+    if hit_x and hit_y do
+      {:ok, a_presses * 3 + b_presses}
+    else
+      :error # not solvable
+    end
+  end
+end
+
+Enum.reduce(claw_machines, 0, fn machine, total ->
+  case UnitCorrectCheapWinner.solve(machine) do
+    {:ok, cost} -> total + cost
+    _ -> total
+  end
+end)
+```
+
+I had to look for help on this one, my Math just isn't strong enough to solve this on my own.
+Once I understood _what_ to do I did the calculations myself on paper.
+The "Idea" discription above is in my own words.
+
+I like to think that I didn't just steel the solution but applied some of my own brain.
