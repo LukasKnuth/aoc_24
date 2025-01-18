@@ -98,3 +98,79 @@ end)
 |> IO.inspect(label: "quadrants")
 |> then(&safety_factor.(&1))
 ```
+
+## Part 2
+
+* Apparently after an _unknown_ amount of seconds, all robot positions take the form of a christmas tree
+* **Output**: How many seconds until the christmas tree appears?
+
+### Problem
+
+The puzzle does NOT specify how to detect the christmas tree. It just says:
+
+> very rarely, most of the robots should arrange themselves into a picture of a Christmas tree.
+
+I know that the Advent of Code main page has an ASCII christmas tree, perhaps it's that one?
+
+```
+   x
+  xxx
+ xxxxx
+xxxxxxx
+ xx xx
+```
+
+```elixir
+is_xmas_tree? = fn grid ->
+  Enum.find(grid, false, fn {x, y} ->
+    # We pretend this might be the star at the top of the tree
+    cond do
+      # first row
+      not MapSet.member?(grid, {x - 1, y + 1}) -> false
+      not MapSet.member?(grid, {x, y + 1}) -> false
+      not MapSet.member?(grid, {x + 1, y + 1}) -> false
+      # 2nd row
+      not MapSet.member?(grid, {x - 2, y + 2}) -> false
+      not MapSet.member?(grid, {x - 1, y + 2}) -> false
+      not MapSet.member?(grid, {x, y + 2}) -> false
+      not MapSet.member?(grid, {x + 1, y + 2}) -> false
+      not MapSet.member?(grid, {x + 2, y + 2}) -> false
+      # 3rd row
+      not MapSet.member?(grid, {x - 3, y + 3}) -> false
+      not MapSet.member?(grid, {x - 2, y + 3}) -> false
+      not MapSet.member?(grid, {x - 1, y + 3}) -> false
+      not MapSet.member?(grid, {x, y + 3}) -> false
+      not MapSet.member?(grid, {x + 1, y + 3}) -> false
+      not MapSet.member?(grid, {x + 2, y + 3}) -> false
+      not MapSet.member?(grid, {x + 3, y + 3}) -> false
+      # stem (with gap)
+      not MapSet.member?(grid, {x - 2, y + 4}) -> false
+      not MapSet.member?(grid, {x - 1, y + 4}) -> false
+      not MapSet.member?(grid, {x + 1, y + 4}) -> false
+      not MapSet.member?(grid, {x + 2, y + 4}) -> false
+      # everything is there!
+      true -> true
+    end
+  end)
+end
+
+Stream.repeatedly(fn -> :next_second end)
+|> Stream.with_index(1)
+|> Enum.reduce_while(robots, fn {_, index}, current_robots ->
+  {new_robots, grid} = 
+    Enum.map_reduce(current_robots, MapSet.new(), fn %{position: pos, velocity: vel}, grid ->
+      new_position = simulate_second.(pos, vel)
+      new_robot = %{velocity: vel, position: new_position}
+      grid = MapSet.put(grid, new_position)
+      {new_robot, grid}
+    end)
+
+  if is_xmas_tree?.(grid) do
+    {:halt, index}
+  else
+    {:cont, new_robots}
+  end
+end)
+```
+
+Yep! Turns out it _was_ the ASCII tree shown on the front page of AoC. Nice little detail :)
