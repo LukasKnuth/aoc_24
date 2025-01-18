@@ -1,0 +1,100 @@
+<!-- livebook:{"file_entries":[{"name":"day14_input.bin","type":"attachment"}]} -->
+
+# Day 14: Restroom Redoubt
+
+```elixir
+Mix.install([
+  {:kino, "~> 0.14.0"}
+])
+```
+
+## Reading
+
+* Robots are guarding the toilet we want to use
+* We must predict where they will be so that we can avoid them
+* **Input** a list of robots with
+  * Their initial position `p` on a tile grid as x,y (top-left is 0|0)
+  * Their velocities `v` in "tiles per second" (negative velocity reverses direction)
+* The tile-space is `101x103` tiles wide
+* Two robots can share the same tile without problem
+* If a robot _would_ go out-of-bounds, it teleports to the other side (wrapping around)
+* We simulate **for 100 seconds**
+  * **Output**: the number of robots per _quadrant_, multiplied together
+    * Requires cutting the entire tile grid into four quadrants
+    * Robots that are on the cut line do NOT count
+
+## Input
+
+```elixir
+robots =
+  Kino.FS.file_path("day14_input.bin")
+  |> File.stream!()
+  |> Enum.map(fn line ->
+    [pos_x, pos_y, vel_x, vel_y] = 
+      line
+      |> String.split(["p=", ",", " ", "v=", ",", "\n"], trim: true)
+      |> Enum.map(&String.to_integer/1)
+    
+    %{position: {pos_x, pos_y}, velocity: {vel_x, vel_y}}
+  end)
+```
+
+## Implementation
+
+* We'll build a "simulation" step function again that simulates one second at a time
+* We can then simulate only to the needed iterations
+* Since robots don't interact when they meet, we can simulate each bot on it's own
+
+```elixir
+grid_width = 101
+grid_height = 103
+
+simulate_second = fn {current_x, current_y}, {velocity_x, velocity_y} ->
+  x = Integer.mod(current_x + velocity_x, grid_width)
+  y = Integer.mod(current_y + velocity_y, grid_height)
+  {x, y}
+end
+
+to_quadrants = fn final_positions ->
+  final_positions
+  |> Enum.reduce(%{}, fn {{x, y}, count}, acc ->
+    h_line = div(grid_width, 2)
+    v_line = div(grid_height, 2)
+    cond do
+      x < h_line and y < v_line ->
+        Map.update(acc, :top_left, count, fn total -> total + count end)
+
+      x > h_line and y < v_line ->
+        Map.update(acc, :top_right, count, fn total -> total + count end)
+
+      x < h_line and y > v_line ->
+        Map.update(acc, :bottom_left, count, fn total -> total + count end)
+
+      x > h_line and y > v_line ->
+        Map.update(acc, :bottom_right, count, fn total -> total + count end)
+
+      true ->
+        # robots _on_ the lines don't count
+        acc
+    end
+  end)
+  |> Map.to_list()
+end
+
+safety_factor = fn [{_, first_quadrant} | rest] ->
+  Enum.reduce(rest, first_quadrant, fn {_, quadrant_count}, total ->
+    quadrant_count * total
+  end)
+end
+
+robots
+|> Enum.reduce(%{}, fn robot, acc ->
+  final_position = Enum.reduce(1..100, robot.position, fn _, current_position ->
+    simulate_second.(current_position, robot.velocity)
+  end)
+  Map.update(acc, final_position, 1, fn count -> count + 1 end)
+end)
+|> then(&to_quadrants.(&1))
+|> IO.inspect(label: "quadrants")
+|> then(&safety_factor.(&1))
+```
