@@ -1,0 +1,116 @@
+<!-- livebook:{"file_entries":[{"name":"day15_input.bin","type":"attachment"}]} -->
+
+# Day 15: Warehouse Woes
+
+```elixir
+Mix.install([
+  {:kino, "~> 0.14.0"}
+])
+```
+
+## Reading
+
+* The lanternfish have lost control over their warehouse robots
+* **Input** is
+  * a Map of the warehouse
+    * `@` for the robots position
+    * `O` for a boxes position
+    * `#` for a wall
+  * a list of possible moves the robot can make
+    * directions are given as arrows in the specific direction (and the letter `v` for down)
+    * the moves are attempted in order
+    * newlines in the input can be ignored
+* Robot movement:
+  * In the direction of the arrow
+  * if there is one or multiple boxes in the way, the robot pushes to box
+  * if the robot would push a box _or_ itself into a wall, nothing happens
+* We need a GPS coordinate for each box
+  * it's imply $$100 * y + x$$
+  * **Output** the sum of all GPS coordinates after the robot is finished moving
+
+## Input
+
+```elixir
+[map, movements] =
+  Kino.FS.file_path("day15_input.bin")
+  |> File.read!()
+  |> String.split("\n\n")
+
+# Small example
+#map = "########\n#..O.O.#\n##@.O..#\n#...O..#\n#.#.O..#\n#...O..#\n#......#\n########"
+#movements = "<^^>>>vv<v>>v<<"
+
+movements = 
+  movements
+  |> String.to_charlist()
+  |> Enum.reject(fn move -> move == ?\n end)
+
+{_pos, map, robot_start} = map
+  |> String.to_charlist()
+  |> Enum.reduce({{0, 0}, %{}, nil}, fn
+    ?#, {{x, y} = pos, map, robo} -> {{x + 1, y}, Map.put(map, pos, :wall), robo}
+    ?O, {{x, y} = pos, map, robo} -> {{x + 1, y}, Map.put(map, pos, :box), robo}
+    ?@, {{x, y}, map, nil} -> {{x + 1, y}, map, {x, y}}
+    ?., {{x, y}, map, robo} -> {{x + 1, y}, map, robo}
+    ?\n, {{_, y}, map, robo} -> {{0, y + 1}, map, robo}
+  end)
+
+:ok
+```
+
+## Part 1
+
+```elixir
+defmodule WarehouseRobot do
+  def move(start_pos, direction, map) do
+    start_pos
+    |> next_in_direction(direction)
+    |> do_move(direction, map)
+    |> case do
+      :error -> {map, start_pos}
+      {:ok, changed_map, new_pos} -> {changed_map, new_pos}
+    end
+  end
+
+  defp do_move(position, direction, map) do
+    case Map.get(map, position, :empty) do
+      :empty -> {:ok, map, position}
+      :wall -> :error
+      :box -> 
+        position
+        |> next_in_direction(direction)
+        |> do_move(direction, map)
+        |> case do
+          :error -> :error
+          {:ok, map, new_pos} -> 
+            map
+            |> Map.delete(position)
+            |> Map.put(new_pos, :box)
+            |> then(fn map -> {:ok, map, position} end)
+        end
+    end
+  end
+
+  defp next_in_direction({x, y}, direction) do
+    case direction do
+      ?> -> {x + 1, y}
+      ?< -> {x - 1, y}
+      ?^ -> {x, y - 1}
+      ?v -> {x, y + 1}
+    end
+  end
+end
+
+sum_gps_coordinates = fn {map, _robot_end} ->
+  Enum.reduce(map, 0, fn
+    {{x, y}, :box}, total -> total + (100 * y + x)
+    _, total -> total
+  end)
+end
+
+movements
+|> Enum.reduce({map, robot_start}, fn direction, {map, pos} ->
+    WarehouseRobot.move(pos, direction, map)
+  end)
+|> sum_gps_coordinates.()
+```
