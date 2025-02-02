@@ -45,7 +45,7 @@ movements =
   |> String.to_charlist()
   |> Enum.reject(fn move -> move == ?\n end)
 
-{_pos, map, robot_start} = map
+{_pos, p1_map, p1_robot_start} = map
   |> String.to_charlist()
   |> Enum.reduce({{0, 0}, %{}, nil}, fn
     ?#, {{x, y} = pos, map, robo} -> {{x + 1, y}, Map.put(map, pos, :wall), robo}
@@ -109,8 +109,195 @@ sum_gps_coordinates = fn {map, _robot_end} ->
 end
 
 movements
-|> Enum.reduce({map, robot_start}, fn direction, {map, pos} ->
+|> Enum.reduce({p1_map, p1_robot_start}, fn direction, {map, pos} ->
     WarehouseRobot.move(pos, direction, map)
   end)
 |> sum_gps_coordinates.()
 ```
+
+## Part 2
+
+* changed algorithm to build the map from the input
+  * everything is now twice as wide (ocupies two tiles next to each other)
+  * `#` becomes `##`
+  * `O` becomes `[]`
+  * `.` becomes `..`
+  * The robot `@` is still just one tile
+* The robot can still move a box, but it moves both pieces at the same time
+  * the two pieces of a box can touch two boxes, which means that all three boxes move together
+
+```elixir
+# Examples
+#map = "#######\n#...#.#\n#.....#\n#..OO@#\n#..O..#\n#.....#\n#######"
+#movements = "<vv<<^^<<^^" |> String.to_charlist()
+
+{_pos, p2_map, p2_robot_start} = map
+  |> String.to_charlist()
+  |> Enum.reduce({{0, 0}, %{}, nil}, fn
+    ?#, {{x, y}, map, robo} -> 
+      map
+      |> Map.put({x, y}, :wall)
+      |> Map.put({x + 1, y}, :wall)
+      |> then(fn map -> {{x + 2, y}, map, robo} end)
+      
+    ?O, {{x, y}, map, robo} ->
+      map
+      |> Map.put({x, y}, :boxL)
+      |> Map.put({x + 1, y}, :boxR)
+      |> then(fn map -> {{x + 2, y}, map, robo} end)
+      
+    ?@, {{x, y}, map, nil} ->
+      {{x + 2, y}, map, {x, y}}
+      
+    ?., {{x, y}, map, robo} ->
+      {{x + 2, y}, map, robo}
+      
+    ?\n, {{_, y}, map, robo} ->
+      {{0, y + 1}, map, robo}
+  end)
+
+render_map = fn map, {robo_x, robo_y} ->
+  Enum.each(0..49, fn y ->
+    Enum.each(0..99, fn x ->
+      map
+      |> Map.get({x, y}, :floor)
+      |> case do
+        :wall -> IO.write("#")
+        :boxL -> IO.write("[")
+        :boxR -> IO.write("]")
+        :floor when x == robo_x and y == robo_y -> IO.write("@")
+        :floor -> IO.write(".")
+      end
+    end)
+    IO.write("\n")
+  end)
+end
+
+render_map.(p2_map, p2_robot_start)
+:ok
+```
+
+### Idea
+
+* We need a map structure where we can express that _two_ tiles belong to the _same_ thing
+* **OR**, we can treat the left and right side of the box as unique pieces
+  * Then, when moving a box, we must find it's "partner" and check colision for _it_, too.
+
+```elixir
+defmodule WideWarehouseRobot do
+  def move(start_pos, direction, map) do
+    start_pos
+    |> do_move(direction, map)
+    |> case do
+      :error -> {map, start_pos}
+      {:ok, changed_map, new_pos} -> {changed_map, new_pos}
+    end
+  end
+
+  defp do_move(position, direction, map) do
+    next_pos = next_in_direction(position, direction)
+    next_object = from_map(next_pos, map)
+    push_object(next_object, next_pos, direction, map)
+  end
+
+  defp push_object(:wall, _position, _direction, _map), do: :error
+  defp push_object(:empty, position, _direction, map), do: {:ok, map, position}
+  defp push_object(:boxR, {x, y}, direction, map) do
+    right = {x, y}
+    left = {x - 1, y}
+    with {:ok, map} <- do_push_box(right, left, direction, map) do
+      {:ok, map, {x, y}}
+    end
+  end
+  defp push_object(:boxL, {x, y}, direction, map) do
+    left = {x, y}
+    right = {x + 1, y}
+    with {:ok, map} <- do_push_box(right, left, direction, map) do
+      {:ok, map, {x, y}}
+    end
+  end
+
+  defp do_push_box(right, left, ?<, map) do
+    # HORIZONTAL LEFT! only check the left half
+    with {:ok, map, left_next} <- do_move(left, ?<, map) do
+      map
+      |> Map.delete(right)
+      |> Map.delete(left)
+      |> Map.put(left_next, :boxL)
+      |> Map.put(left, :boxR)
+      |> then(fn map -> {:ok, map} end)
+    end
+  end
+  defp do_push_box(right, left, ?>, map) do
+    # HORIZONTAL LEFT! only check the right half
+    with {:ok, map, right_next} <- do_move(right, ?>, map) do
+      map
+      |> Map.delete(right)
+      |> Map.delete(left)
+      |> Map.put(right_next, :boxR)
+      |> Map.put(right, :boxL)
+      |> then(fn map -> {:ok, map} end)
+    end
+  end
+  defp do_push_box(right, left, direction, map) when direction in [?^, ?v] do
+    # VERTICAL! check both halfs
+    with {:ok, map, right_next} <- do_move(right, direction, map),
+         {:ok, map, left_next} <- do_move(left, direction, map) do
+      map
+      |> Map.delete(right)
+      |> Map.delete(left)
+      |> Map.put(right_next, :boxR)
+      |> Map.put(left_next, :boxL)
+      |> then(fn map -> {:ok, map} end)
+    end
+  end
+
+  defp from_map(position, map), do: Map.get(map, position, :empty)
+
+  defp next_in_direction({x, y}, direction) do
+    case direction do
+      ?> -> {x + 1, y}
+      ?< -> {x - 1, y}
+      ?^ -> {x, y - 1}
+      ?v -> {x, y + 1}
+    end
+  end
+end
+
+sum_wide_gps_coordinates = fn {map, _robot_end} ->
+  Enum.reduce(map, 0, fn
+    {{x, y}, :boxL}, total -> total + (100 * y + x)
+    _, total -> total
+  end)
+end
+
+movements
+|> Enum.reduce({p2_map, p2_robot_start}, fn direction, {map, pos} ->
+  {map, robot_pos} = WideWarehouseRobot.move(pos, direction, map)
+  #render_map.(map, robot_pos)
+  {map, robot_pos}
+  end)
+|> sum_wide_gps_coordinates.()
+```
+
+I built the algorithm to solve the problem illustrated in the puzzle input, which was showing a _vertical_ push. Here, the box can clip two boxes on it's way up/down because it is now 2 tiles wide. We must check either half of the box for colisions.
+
+* We can only _push_ the box (not drag it)
+* We store the two halfs of the box as independent pieces
+* Pushing on the left _always_ means we face the right half of the box
+* Pushing on the right _always_ means we face the left half of the box
+
+If we use the same code for _horizontal_ pushes as well, we have a problem:
+
+1. Determine the other half of the box we're facing
+2. Check the map to see if we can move this half in the direction
+3. Find the other half of our current box on the map as an obstacle
+4. Call the logic recursively to check the "newly" found box
+5. Determine the other half to the new (and old) box we're facing
+6. Check the map to see if we can move this half in the direction
+7. Find the other half of our current (and previous) box on the map as an obstacle
+8. Call the logic recursively to check the "newly" found box..
+
+We're now in an infinite loop.
+
+My solution was that for horizontal moves, we only need to check the outer side of the box for colisions since because the boxes are only 1 tile high.
