@@ -1,0 +1,280 @@
+<!-- livebook:{"file_entries":[{"name":"day16_input.bin","type":"attachment"}]} -->
+
+# Day 16: Reindeer Maze
+
+```elixir
+Mix.install([
+  {:kino, "~> 0.15.0"},
+  {:vega_lite, "~> 0.1.11"},
+  {:kino_vega_lite, "~> 0.1.13"}
+])
+```
+
+## Reading
+
+* We're at the Reindeer Olympics where they are running through a Maze
+* **Input** the map of the maze
+  * `S` denotest the starting point, orientation **East**
+  * `E` marks the goal/end
+  * `#` is a wall that can't be passed through
+  * `.` is just a free space
+* Moving through the Maze incurs costs:
+  * moving in the current facing direction: `1` point
+  * rotating 90deg (either direction): `1000` points
+* **Output** the cost of the cheapest way through the maze
+
+## Input
+
+```elixir
+{map, start, goal} =
+  #Kino.FS.file_path("day16_input.bin")
+  #|> File.read!()
+  #"################\n#...#...#...#..E#\n#.#.#.#.#.#.#.#.#\n#.#.#.#...#...#.#\n#.#.#.#.###.#.#.#\n#...#.#.#.....#.#\n#.#.#.#.#.#####.#\n#.#...#.#.#.....#\n#.#.#####.#.###.#\n#.#.#.......#...#\n#.#.###.#####.###\n#.#.#...#.....#.#\n#.#.#.#####.###.#\n#.#.#.........#.#\n#.#.#.#########.#\n#S#.............#\n#################\n"
+  #"###############\n#.......#....E#\n#.#.###.#.###.#\n#.....#.#...#.#\n#.###.#####.#.#\n#.#.#.......#.#\n#.#.#####.###.#\n#...........#.#\n###.#.#####.#.#\n#...#.....#.#.#\n#.#.#.###.#.#.#\n#.....#...#.#.#\n#.###.#.#.#.#.#\n#S..#.....#...#\n###############"
+  "###############################\n#...........#...........#.....#\n#.#.#######.#.#####.#####.#.#.#\n#.#.......#.#...#...#.....#.#.#\n#.#.#.#.###.#.###.#.#.#.###.###\n#.#...#.#...#.#...#.#...#.#.#.#\n#.#.#.#.#.#.#.#.#.#.###.#.#.###\n#...#...#.................#...#\n###.#.#.#.###.#.###.#.#.#.#####\n#...#.#.#.#...#..............E#\n#.#.#.#.#.#.###########.#.#.###\n#.....#.#.#.....#.............#\n#.#.#.###.#####.###.###.#.#####\n#...........#.#.....#.........#\n#.#.#.#.#.#.#.#######.#.#.#####\n#.#.#.....#...#...#.......#...#\n###.#.#########.#.#.#####.###.#\n#...#...........#.#.........#.#\n#.#.#.###########.###.#.###.#.#\n#.#...#.......#.....#.#.....#.#\n#.#.#.###.###.#.###.#.#.###.###\n#.#.........#.#...#.#.#.#...#.#\n#.#.#.#.###.#####.###.#.#####.#\n#.....#...#...#...#...#.......#\n#.#######.#.#.#.###.###########\n#.......#.....#...........#...#\n#.#####.#####.###########.#.###\n#...#.#.................#.#.#.#\n###.#.#########.#######.#.#.#.#\n#...#.....#...#.#.#S....#.#.#.#\n###############################\n"
+  |> String.to_charlist()
+  |> Enum.reduce({0,0, %{}}, fn
+    ?#, {x, y, acc} -> {x + 1, y, Map.put(acc, {x, y}, :wall)}
+    ?S, {x, y, acc} -> {x + 1, y, Map.put(acc, :start, {x, y})}
+    ?E, {x, y, acc} -> {x + 1, y, Map.put(acc, :goal, {x, y})}
+    ?., {x, y, acc} -> {x + 1, y, acc}
+    ?\n, {_x, y, acc} -> {0, y + 1, acc}
+  end)
+  |> then(fn {_, _, acc} ->
+    {start, acc} = Map.pop(acc, :start)
+    {goal, acc} = Map.pop(acc, :goal)
+    {acc, start, goal}
+  end)
+```
+
+## Implementation
+
+* We're going to implement the [A-Star algorithm](https://en.wikipedia.org/wiki/A*_search_algorithm) to traverse the Maze
+* This algorithm uses a scoring function to determine which way is "better"
+  * This maps 1:1 to the costs from the input
+
+```elixir
+defmodule AStar do
+  defstruct [:candidates, :costTo, :estimateTo, :cameFrom]
+  
+  def solve(map, start, goal) when is_map(map) and is_tuple(start) and is_tuple(goal) do
+    state = %AStar{
+      candidates: MapSet.new([start]),
+      # Both: From start _to_ the stored position
+      costTo: %{start => 0},
+      estimateTo: %{start => estimate_cost(nil, start, goal)},
+      # Maps the position you came from the reach the given one
+      cameFrom: %{}
+    }
+
+    Stream.repeatedly(fn -> :next_step end)
+    |> Enum.reduce_while(state, fn _, state ->
+      current = next_candidate(state.candidates, state.estimateTo)
+
+      if current == goal do
+        # Found the end, return the cost for the path
+        #IO.inspect(reconstruct(state.cameFrom, goal), label: "path")
+        path = reconstruct(state.cameFrom, goal)
+        {:halt, {:ok, Map.fetch!(state.costTo, current), path}}
+      else
+        # Don't revisit the current tile again
+        state = %{state | candidates: MapSet.delete(state.candidates, current)}
+        
+        state =
+          current
+          |> walkable_neighbours(map)
+          |> Enum.reduce(state, fn neighbor, state ->
+            previous = Map.get(state.cameFrom, current)
+            cost = Map.fetch!(state.costTo, current) + cost_function(previous, current, neighbor)
+            current_best = Map.get(state.costTo, neighbor)
+            
+            if is_nil(current_best) or cost < current_best do
+              estimate = cost + estimate_cost(current, neighbor, goal)
+              #IO.puts("Moving to #{inspect(neighbor)}, cost #{cost}, estimate #{estimate}")
+              %{state |
+                costTo: Map.put(state.costTo, neighbor, cost),
+                estimateTo: Map.put(state.estimateTo, neighbor, estimate),
+                candidates: MapSet.put(state.candidates, neighbor),
+                cameFrom: Map.put(state.cameFrom, neighbor, current)
+              }
+            else
+              # We have a better route already
+              state
+            end
+          end)
+
+        if MapSet.size(state.candidates) == 0 do
+          # Exhausted all options, maze not solvable
+          {:halt, :error}
+        else
+          # We have more options left, continue
+          {:cont, state}
+        end
+      end
+    end)
+  end
+
+  defp walkable_neighbours({x, y}, map) do
+    [{x + 1, y}, {x - 1, y}, {x, y + 1}, {x, y - 1}]
+    |> Enum.reject(fn neighbor -> Map.get(map, neighbor, :free) == :wall end)
+  end
+
+  defp next_candidate(candidates, estimates) do
+    estimates
+    |> Enum.filter(fn {position, _cost} -> MapSet.member?(candidates, position) end)
+    |> Enum.min_by(fn {_position, cost} -> cost end)
+    |> then(fn {position, _cost} -> position end)
+  end
+
+  defp cost_function(nil, current, next) do
+    calc_cost(:east, get_direction(current, next), 1)
+  end
+  defp cost_function(previous, current, next) do
+    calc_cost(get_direction(previous, current), get_direction(current, next), 1)
+  end
+
+  @cost_move 1
+  @cost_turn 1000
+  defp calc_cost(start_direction, end_direction, steps) do
+    (@cost_move * steps) + (@cost_turn * turn_count(start_direction, end_direction))
+  end
+
+  defp get_direction({from_x, from_y}, {to_x, to_y}) do
+     cond do
+      from_x < to_x and from_y == to_y -> :east
+      from_x > to_x and from_y == to_y -> :west
+      from_x == to_x and from_y > to_y -> :north
+      from_x == to_x and from_y < to_y -> :south
+    end
+  end
+
+  defp turn_count(start_direction, end_direction) do
+    case {start_direction, end_direction} do
+      {start, final} when start == final -> 0
+      # clockwise
+      {:north, :east} -> 1
+      {:east, :south} -> 1
+      {:south, :west} -> 1
+      {:west, :north} -> 1
+      # counter-clockwise
+      {:east, :north} -> 1
+      {:south, :east} -> 1
+      {:west, :south} -> 1
+      {:north, :west} -> 1
+      # 180 degree turn, direction doesn't matter
+      _ -> 2
+    end
+  end
+
+  defp estimate_cost(previous, {cx, cy}, {gx, gy}) do
+    # Using straight line distance, optimize with "Taxicab Distance"?
+    #:math.pow(cx - gx, 2) + :math.pow(cy - gy, 2)
+    #|> :math.sqrt()
+    x_diff = abs(cx - gx)
+    y_diff = abs(cy - gy)
+    current_facing = if is_nil(previous), do: :east, else: get_direction(previous, {cx, cy})
+    
+    min_turns = case {current_facing, x_diff, y_diff} do
+      {:east, _, y_diff} when y_diff > 0 -> 1
+      {:west, _, y_diff} when y_diff > 0 -> 1
+      {:north, x_diff, _} when x_diff > 0 -> 1
+      {:south, x_diff, _} when x_diff > 0 -> 1
+      _ -> 0
+    end
+    taxicap_distance = (x_diff + y_diff)
+
+    (min_turns * @cost_turn) + (taxicap_distance * @cost_move)
+    |> IO.inspect(label: "estimate")
+  end
+
+  defp reconstruct(cameFrom, goal) do
+    Stream.repeatedly(fn -> :next_step end)
+    |> Enum.reduce_while({goal, [goal]}, fn _, {pos, acc} ->
+      case Map.fetch(cameFrom, pos) do
+        {:ok, previous} -> {:cont, {previous, [previous | acc]}}
+        :error -> {:halt, acc}
+      end
+    end)
+  end
+end
+
+{:ok, score, path} = AStar.solve(map, start, goal)
+score
+```
+
+Best: `105516`
+
+```elixir
+alias VegaLite, as: Vl
+
+# Invert Y-axis because VegaLite draws positive y from bottom-left instead of top-right
+map_points = Enum.map(map, fn {{x, y}, _} -> %{"x" => x, "y" => -y, "type" => :wall} end)
+path_points = Enum.map(path, fn {x, y} -> %{"x" => x, "y" => -y, "type" => :path} end)
+
+Vl.new(width: 800, height: 800)
+|> Vl.data_from_values(Enum.concat(map_points, path_points))
+|> Vl.mark(:square)
+|> Vl.encode_field(:x, "x", type: :quantitative)
+|> Vl.encode_field(:y, "y", type: :quantitative)
+|> Vl.encode_field(:color, "type", type: :nominal)
+```
+
+* **Problem**: We should be moving `:east` at `(13|27)`, but instead we keep going
+* It seems to me that we only ever switch direction when we _have to_
+  * Either because the maze doesn't allow continuing "as is"
+  * Or because the other direction is "obviously" worse
+* Perhaps this is the heurestic strongly penalizing?
+
+<!-- livebook:{"break_markdown":true} -->
+
+```
+function reconstruct_path(cameFrom, current)
+    total_path := {current}
+    while current in cameFrom.Keys:
+        current := cameFrom[current]
+        total_path.prepend(current)
+    return total_path
+
+// A* finds a path from start to goal.
+// h is the heuristic function. h(n) estimates the cost to reach goal from node n.
+function A_Star(start, goal, h)
+    // The set of discovered nodes that may need to be (re-)expanded.
+    // Initially, only the start node is known.
+    // This is usually implemented as a min-heap or priority queue rather than a hash-set.
+    openSet := {start}
+
+    // For node n, cameFrom[n] is the node immediately preceding it on the cheapest path from the start
+    // to n currently known.
+    cameFrom := an empty map
+
+    // For node n, gScore[n] is the currently known cost of the cheapest path from start to n.
+    gScore := map with default value of Infinity
+    gScore[start] := 0
+
+    // For node n, fScore[n] := gScore[n] + h(n). fScore[n] represents our current best guess as to
+    // how cheap a path could be from start to finish if it goes through n.
+    fScore := map with default value of Infinity
+    fScore[start] := h(start)
+
+    while openSet is not empty
+        // This operation can occur in O(Log(N)) time if openSet is a min-heap or a priority queue
+        current := the node in openSet having the lowest fScore[] value
+        if current = goal
+            return reconstruct_path(cameFrom, current)
+
+        openSet.Remove(current)
+        for each neighbor of current
+            // d(current,neighbor) is the weight of the edge from current to neighbor
+            // tentative_gScore is the distance from start to the neighbor through current
+            tentative_gScore := gScore[current] + d(current, neighbor)
+            if tentative_gScore < gScore[neighbor]
+                // This path to neighbor is better than any previous one. Record it!
+                cameFrom[neighbor] := current
+                gScore[neighbor] := tentative_gScore
+                fScore[neighbor] := tentative_gScore + h(neighbor)
+                if neighbor not in openSet
+                    openSet.add(neighbor)
+
+    // Open set is empty but goal was never reached
+    return failure
+```
