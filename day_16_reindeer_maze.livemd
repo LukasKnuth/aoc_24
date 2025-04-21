@@ -1,4 +1,4 @@
-<!-- livebook:{"file_entries":[{"name":"day16_input.bin","type":"attachment"}]} -->
+<!-- livebook:{"file_entries":[{"name":"day16_input.bin","type":"attachment"},{"name":"day16_issue.webp","type":"attachment"}]} -->
 
 # Day 16: Reindeer Maze
 
@@ -27,11 +27,11 @@ Mix.install([
 
 ```elixir
 {map, size, start, goal} =
-  #Kino.FS.file_path("day16_input.bin")
-  #|> File.read!()
+  Kino.FS.file_path("day16_input.bin")
+  |> File.read!()
   #"################\n#...#...#...#..E#\n#.#.#.#.#.#.#.#.#\n#.#.#.#...#...#.#\n#.#.#.#.###.#.#.#\n#...#.#.#.....#.#\n#.#.#.#.#.#####.#\n#.#...#.#.#.....#\n#.#.#####.#.###.#\n#.#.#.......#...#\n#.#.###.#####.###\n#.#.#...#.....#.#\n#.#.#.#####.###.#\n#.#.#.........#.#\n#.#.#.#########.#\n#S#.............#\n#################\n"
   #"###############\n#.......#....E#\n#.#.###.#.###.#\n#.....#.#...#.#\n#.###.#####.#.#\n#.#.#.......#.#\n#.#.#####.###.#\n#...........#.#\n###.#.#####.#.#\n#...#.....#.#.#\n#.#.#.###.#.#.#\n#.....#...#.#.#\n#.###.#.#.#.#.#\n#S..#.....#...#\n###############"
-  "###############################\n#...........#...........#.....#\n#.#.#######.#.#####.#####.#.#.#\n#.#.......#.#...#...#.....#.#.#\n#.#.#.#.###.#.###.#.#.#.###.###\n#.#...#.#...#.#...#.#...#.#.#.#\n#.#.#.#.#.#.#.#.#.#.###.#.#.###\n#...#...#.................#...#\n###.#.#.#.###.#.###.#.#.#.#####\n#...#.#.#.#...#..............E#\n#.#.#.#.#.#.###########.#.#.###\n#.....#.#.#.....#.............#\n#.#.#.###.#####.###.###.#.#####\n#...........#.#.....#.........#\n#.#.#.#.#.#.#.#######.#.#.#####\n#.#.#.....#...#...#.......#...#\n###.#.#########.#.#.#####.###.#\n#...#...........#.#.........#.#\n#.#.#.###########.###.#.###.#.#\n#.#...#.......#.....#.#.....#.#\n#.#.#.###.###.#.###.#.#.###.###\n#.#.........#.#...#.#.#.#...#.#\n#.#.#.#.###.#####.###.#.#####.#\n#.....#...#...#...#...#.......#\n#.#######.#.#.#.###.###########\n#.......#.....#...........#...#\n#.#####.#####.###########.#.###\n#...#.#.................#.#.#.#\n###.#.#########.#######.#.#.#.#\n#...#.....#...#.#.#S....#.#.#.#\n###############################\n"
+  #"###############################\n#...........#...........#.....#\n#.#.#######.#.#####.#####.#.#.#\n#.#.......#.#...#...#.....#.#.#\n#.#.#.#.###.#.###.#.#.#.###.###\n#.#...#.#...#.#...#.#...#.#.#.#\n#.#.#.#.#.#.#.#.#.#.###.#.#.###\n#...#...#.................#...#\n###.#.#.#.###.#.###.#.#.#.#####\n#...#.#.#.#...#..............E#\n#.#.#.#.#.#.###########.#.#.###\n#.....#.#.#.....#.............#\n#.#.#.###.#####.###.###.#.#####\n#...........#.#.....#.........#\n#.#.#.#.#.#.#.#######.#.#.#####\n#.#.#.....#...#...#.......#...#\n###.#.#########.#.#.#####.###.#\n#...#...........#.#.........#.#\n#.#.#.###########.###.#.###.#.#\n#.#...#.......#.....#.#.....#.#\n#.#.#.###.###.#.###.#.#.###.###\n#.#.........#.#...#.#.#.#...#.#\n#.#.#.#.###.#####.###.#.#####.#\n#.....#...#...#...#...#.......#\n#.#######.#.#.#.###.###########\n#.......#.....#...........#...#\n#.#####.#####.###########.#.###\n#...#.#.................#.#.#.#\n###.#.#########.#######.#.#.#.#\n#...#.....#...#.#.#S....#.#.#.#\n###############################\n"
   |> String.to_charlist()
   |> Enum.reduce({0,0, %{}}, fn
     ?#, {x, y, acc} -> {x + 1, y, Map.put(acc, {x, y}, :wall)}
@@ -70,11 +70,10 @@ defmodule Dijkstra do
     Stream.repeatedly(fn -> :next_step end)
     |> Enum.reduce_while(state, fn _, state ->
       {position, direction} = next_candidate(state.candidates, state.costTo)
-      #IO.puts("------ #{inspect(position)}, #{direction} ------")
 
       if position == goal do
         # Found the end, return the cost for the path
-        path = reconstruct(state.cameFrom, goal)
+        path = reconstruct(state.cameFrom, goal, direction)
         {:halt, {:ok, Map.fetch!(state.costTo, {position, direction}), path}}
       else
         # Don't revisit the current tile again
@@ -83,27 +82,22 @@ defmodule Dijkstra do
         state =
           position
           |> walkable_neighbours(map)
-          #|> IO.inspect(label: "Neighbors")
           |> Enum.reduce(state, fn neighbor, state ->
             {new_cost, new_direction} = cost_function(position, direction, neighbor)
             cost = Map.fetch!(state.costTo, {position, direction}) + new_cost
-            #IO.inspect(cost, label: "Total Cost")
             
             if cost < Map.get(state.costTo, {neighbor, new_direction}, @really_high) do
               %{state |
                 costTo: Map.put(state.costTo, {neighbor, new_direction}, cost),
-                cameFrom: Map.put(state.cameFrom, neighbor, position),
+                cameFrom: Map.put(state.cameFrom, {neighbor, new_direction}, {position, direction}),
                 candidates: MapSet.put(state.candidates, {neighbor, new_direction})
               }
             else
               # We have a better route already
-              IO.puts("#{inspect(position)} (#{direction}), but better route")
-              IO.inspect(MapSet.size(state.candidates), label: "count")
               state
             end
           end)
 
-        IO.inspect(map_size(state.costTo), label: "count")
         if MapSet.size(state.candidates) == 0 do
           # Exhausted all options, maze not solvable
           {:halt, :error}
@@ -130,7 +124,6 @@ defmodule Dijkstra do
     next_dir = get_direction(current, next)
     turn_count = if direction == next_dir, do: 0, else: 1
     cost = @cost_move + (@cost_turn * turn_count)
-    #IO.puts("From #{inspect(current)} (#{direction}) to #{inspect(next)} (#{next_dir}) cost #{cost}")
     {cost, next_dir}
   end
 
@@ -143,11 +136,11 @@ defmodule Dijkstra do
     end
   end
 
-  defp reconstruct(cameFrom, goal) do
+  defp reconstruct(cameFrom, goal, goal_direction) do
     Stream.repeatedly(fn -> :next_step end)
-    |> Enum.reduce_while({goal, [goal]}, fn _, {pos, acc} ->
-      case Map.fetch(cameFrom, pos) do
-        {:ok, previous} -> {:cont, {previous, [previous | acc]}}
+    |> Enum.reduce_while({goal, goal_direction, [goal]}, fn _, {pos, dir, acc} ->
+      case Map.fetch(cameFrom, {pos, dir}) do
+        {:ok, {p_pos, p_dir}} -> {:cont, {p_pos, p_dir, [p_pos | acc]}}
         :error -> {:halt, acc}
       end
     end)
@@ -158,7 +151,11 @@ end
 score
 ```
 
-Best: `105516`
+I had massive issues getting the A* implementation to find the path with the actuall lowest score. It was finding a good path, but not the optimal one.
+
+To make everyhing simpler, I removed the whole heurestic (playing around with that never had _any_ noticable effect) and switched to [Dijkstra's algorithm](https://en.wikipedia.org/wiki/Dijkstra%27s_algorithm) instead.
+
+To help debug, I hacked together the following visualization. It abuses VegaLite graphs to render boxes "like pixels" onto a grid. It does the job but not very well.
 
 <!-- livebook:{"reevaluate_automatically":true} -->
 
@@ -177,11 +174,25 @@ Vl.new(width: 800, height: 800)
 |> Vl.encode_field(:color, "type", type: :nominal)
 ```
 
-* **Problem**: We should be moving `:east` at `(13|27)`, but instead we keep going
-* The problem is that I don't note the direction but calcualte it each time I do the costs
-  * I use `cameFrom[current]` as my previous position for the initial direction calculation
-  * But this will **always** pick the previous on the _current path_, not the path a neighbor might have taken here
-  * For the example above, both neighbors `12|7` and `10|7` have an inital direction of `:west`
-  * This is because the current established direction is `:west`
-  * However, the `10|7` neighbor has an actual direction of `:east`
-  * Making the turn `:east` to `:east` the cheaper option - THIS IS MISSED!
+The problem I was having is that my solution would pick the "wrong" turn for a very specific piece of the maze in the top-left corner. With of lot of help from **@mathieuDR** I fixed the issue like this:
+
+1. Ran my input through his solution to get the actual "best" route through the maze
+2. Reduced the map to only the problematic corner, added appropriate start/exit points based on the output above
+3. Verified that my solution made the wrong decision (see image below)
+
+![](files/day16_issue.webp)
+
+The problem was that my solution was not tracking the current direction. 
+Rather, it was using the `previous` and `current` position to calculate the `current_direction`.
+Then, I used `current` and `neighbor` to calculate the `neighbor_direction`.
+If `current_direction != neighbor_direction`, we know we have turned and need to add `1000` to the path cost.
+
+The problem is that I wasn't tracking the direction with the actual positions in my `cameFrom` and `costTo`, my calculated `current_direction` wasn't along a potential _new_ path, but always along the currently established one.
+
+At the converging point shown in the image, the established (green) path was weighted at `9070` while the new (red) path was `10050`.
+It was a good 20 steps shorter, but it was incorrectly penalized with an additional turn, making it worse at `10070`.
+This is because the direction calcualted in `current_direction` was `:south` (along the green path) rather than `:east` (along the red path).
+
+## Part 2
+
+tbd...
